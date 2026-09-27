@@ -11,6 +11,7 @@ namespace PAYROLL
         public Form1()
         {
             InitializeComponent();
+            txtDeductions.ReadOnly = true; // now auto-computed by DeductionsCalculator, not typed in
             LoadEmployees();
         }
 
@@ -48,7 +49,6 @@ namespace PAYROLL
                 decimal basicSalary = decimal.Parse(txtBasicSalary.Text);
                 decimal hoursWorked = decimal.Parse(txtHoursWorked.Text);
                 decimal overtimeHours = decimal.Parse(txtOvertimeHours.Text);
-                decimal deductions = decimal.Parse(txtDeductions.Text);
 
                 // Standard monthly working hours
                 decimal hourlyRate = basicSalary / 160m;
@@ -62,6 +62,13 @@ namespace PAYROLL
                 // Gross pay
                 decimal grossPay = regularPay + overtimePay;
 
+                // Government-mandated deductions (SSS, PhilHealth, Pag-IBIG,
+                // withholding tax) computed from basic salary — no longer
+                // manually typed in, so it can't drift out of sync with the
+                // employee's actual salary bracket.
+                var d = DeductionsCalculator.Compute(basicSalary);
+                decimal deductions = d.total;
+
                 // Net pay
                 decimal netPay = grossPay - deductions;
 
@@ -69,12 +76,13 @@ namespace PAYROLL
                 txtRegularPay.Text = regularPay.ToString("N2");
                 txtOvertimePay.Text = overtimePay.ToString("N2");
                 txtGrossPay.Text = grossPay.ToString("N2");
+                txtDeductions.Text = deductions.ToString("N2");
                 txtNetPay.Text = netPay.ToString("N2");
             }
             catch
             {
                 MessageBox.Show(
-                    "Please enter valid numbers for salary, hours worked, overtime hours, and deductions.",
+                    "Please enter valid numbers for salary, hours worked, and overtime hours.",
                     "Invalid Input",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Warning);

@@ -163,22 +163,40 @@ namespace PAYROLL
             {
                 using var connection = new MySqlConnection(connectionString);
                 const string query = @"
-                    SELECT COUNT(*)
+                    SELECT Role, EmployeeID
                     FROM Accounts
                     WHERE Username = @Username
-                    AND Password = @Password";
+                    AND Password = @Password
+                    LIMIT 1";
 
                 using var command = new MySqlCommand(query, connection);
                 command.Parameters.AddWithValue("@Username", username);
                 command.Parameters.AddWithValue("@Password", password);
 
                 connection.Open();
-                int result = Convert.ToInt32(command.ExecuteScalar());
+                using var reader = command.ExecuteReader();
 
-                if (result > 0)
+                if (reader.Read())
                 {
-                    var dashboard = new DashboardForm(username); // shows the real logged-in name
-                    dashboard.Show();
+                    string role = reader["Role"]?.ToString() ?? "Employee";
+                    int? employeeId = reader["EmployeeID"] is DBNull ? null : Convert.ToInt32(reader["EmployeeID"]);
+                    reader.Close();
+
+                    if (role == "Admin")
+                    {
+                        var dashboard = new DashboardForm(username);
+                        dashboard.Show();
+                    }
+                    else if (employeeId.HasValue)
+                    {
+                        var portal = new EmployeeDashboardForm(username, employeeId.Value);
+                        portal.Show();
+                    }
+                    else
+                    {
+                        ShowError("This account isn't linked to an employee record. Contact an admin.");
+                        return;
+                    }
                     Hide();
                 }
                 else

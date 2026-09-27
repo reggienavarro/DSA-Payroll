@@ -16,6 +16,7 @@ namespace PAYROLL
         private TextBox txtUsername = null!;
         private TextBox txtPassword = null!;
         private TextBox txtConfirmPassword = null!;
+        private TextBox txtEmployeeId = null!;
         private Label errorLabel = null!;
         private Panel card = null!;
         private Panel rightPanel = null!;
@@ -48,7 +49,7 @@ namespace PAYROLL
         private void BuildRightPanel()
         {
             rightPanel = new Panel { Dock = DockStyle.Fill, BackColor = Color.White };
-            card = new Panel { Size = new Size(360, 470), BackColor = Color.White };
+            card = new Panel { Size = new Size(360, 560), BackColor = Color.White };
 
             var title = new Label
             {
@@ -61,7 +62,7 @@ namespace PAYROLL
             };
             var subtitle = new Label
             {
-                Text = "Register a new account to access the dashboard.",
+                Text = "Register using the Employee ID your admin gave you.",
                 Font = Theme.Body,
                 ForeColor = Theme.TextGray,
                 AutoSize = true,
@@ -69,9 +70,11 @@ namespace PAYROLL
                 BackColor = Color.White
             };
 
-            var (userField, userBox) = InputField.Create("USERNAME", false, new Size(360, 44), new Point(0, 96));
-            var (passField, passBox) = InputField.Create("PASSWORD", true, new Size(360, 44), new Point(0, 176));
-            var (confirmField, confirmBox) = InputField.Create("CONFIRM PASSWORD", true, new Size(360, 44), new Point(0, 256));
+            var (empIdField, empIdBox) = InputField.Create("EMPLOYEE ID", false, new Size(360, 44), new Point(0, 96));
+            var (userField, userBox) = InputField.Create("USERNAME", false, new Size(360, 44), new Point(0, 176));
+            var (passField, passBox) = InputField.Create("PASSWORD", true, new Size(360, 44), new Point(0, 256));
+            var (confirmField, confirmBox) = InputField.Create("CONFIRM PASSWORD", true, new Size(360, 44), new Point(0, 336));
+            txtEmployeeId = empIdBox;
             txtUsername = userBox;
             txtPassword = passBox;
             txtConfirmPassword = confirmBox;
@@ -82,7 +85,7 @@ namespace PAYROLL
                 ForeColor = Theme.RedText,
                 Font = Theme.SmallBold,
                 Size = new Size(360, 20),
-                Location = new Point(0, 326),
+                Location = new Point(0, 406),
                 BackColor = Color.White,
                 Visible = false
             };
@@ -90,7 +93,7 @@ namespace PAYROLL
             var btnCreate = new ModernButton
             {
                 Text = "Create Account",
-                Location = new Point(0, 352),
+                Location = new Point(0, 432),
                 Size = new Size(360, 44),
                 SurroundColor = Color.White
             };
@@ -102,7 +105,7 @@ namespace PAYROLL
                 Font = Theme.Body,
                 ForeColor = Theme.TextGray,
                 AutoSize = true,
-                Location = new Point(0, 412),
+                Location = new Point(0, 492),
                 BackColor = Color.White
             };
             var backLink = new LinkLabel
@@ -110,7 +113,7 @@ namespace PAYROLL
                 Text = "Back to Login",
                 Font = Theme.BodyBold,
                 AutoSize = true,
-                Location = new Point(backRow.Right + 6, 412),
+                Location = new Point(backRow.Right + 6, 492),
                 BackColor = Color.White,
                 LinkColor = Theme.Accent,
                 ActiveLinkColor = Theme.AccentDark,
@@ -120,6 +123,7 @@ namespace PAYROLL
 
             card.Controls.Add(title);
             card.Controls.Add(subtitle);
+            card.Controls.Add(empIdField);
             card.Controls.Add(userField);
             card.Controls.Add(passField);
             card.Controls.Add(confirmField);
@@ -146,13 +150,19 @@ namespace PAYROLL
         private void BtnCreate_Click(object? sender, EventArgs e)
         {
             errorLabel.Visible = false;
+            string employeeIdText = txtEmployeeId.Text.Trim();
             string username = txtUsername.Text.Trim();
             string password = txtPassword.Text.Trim();
             string confirm = txtConfirmPassword.Text.Trim();
 
-            if (username.Length == 0 || password.Length == 0 || confirm.Length == 0)
+            if (employeeIdText.Length == 0 || username.Length == 0 || password.Length == 0 || confirm.Length == 0)
             {
                 ShowError("Please fill in all fields.");
+                return;
+            }
+            if (!int.TryParse(employeeIdText, out int employeeId))
+            {
+                ShowError("Employee ID must be a number.");
                 return;
             }
             if (password != confirm)
@@ -164,12 +174,28 @@ namespace PAYROLL
             try
             {
                 using var connection = new MySqlConnection(connectionString);
-                const string query = "INSERT INTO Accounts (Username, Password) VALUES (@Username, @Password)";
+                connection.Open();
+
+                // Employee ID must already exist in the Employees table — this
+                // is what stops a random person from registering and seeing
+                // someone else's payroll.
+                using (var check = new MySqlCommand("SELECT COUNT(*) FROM Employees WHERE EmployeeID = @EmployeeID", connection))
+                {
+                    check.Parameters.AddWithValue("@EmployeeID", employeeId);
+                    if (Convert.ToInt32(check.ExecuteScalar()) == 0)
+                    {
+                        ShowError("No employee found with that Employee ID. Check with your admin.");
+                        return;
+                    }
+                }
+
+                const string query = @"
+                    INSERT INTO Accounts (Username, Password, Role, EmployeeID)
+                    VALUES (@Username, @Password, 'Employee', @EmployeeID)";
                 using var command = new MySqlCommand(query, connection);
                 command.Parameters.AddWithValue("@Username", username);
                 command.Parameters.AddWithValue("@Password", password);
-
-                connection.Open();
+                command.Parameters.AddWithValue("@EmployeeID", employeeId);
                 command.ExecuteNonQuery();
 
                 MessageBox.Show(

@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
+using System.Data;
 using System.Drawing;
 using System.Windows.Forms;
 using PAYROLL.UI;
@@ -25,6 +27,8 @@ namespace PAYROLL
 
         private readonly Panel contentHost = new Panel();      // dashboard view OR embedded Form1
         private readonly Panel dashboardContent = new Panel(); // cards + charts + employee table
+        private Panel? ticketsContent;                         // built lazily on first visit
+        private DataGridView ticketsGrid = null!;
         private Form? hostedEmployeeForm;                      // Form1, embedded like the old app did
         private bool loggingOut;
 
@@ -68,11 +72,12 @@ namespace PAYROLL
                 WrapContents = false, BackColor = Theme.Navy, Padding = new Padding(0, 12, 0, 0)
             };
 
-            // Only real destinations — your app has these two screens.
+            // Only real destinations — your app has these three screens.
             var items = new (string key, string text, IconKind icon)[]
             {
                 ("overview", "Overview", IconKind.Grid),
                 ("employee", "Employee", IconKind.Users),
+                ("tickets", "Tickets", IconKind.Bell),
             };
 
             navButtons = new SidebarButton[items.Length];
@@ -271,6 +276,7 @@ namespace PAYROLL
             }
             if (key == "overview") ShowOverview();
             else if (key == "employee") ShowEmployee();
+            else if (key == "tickets") ShowTickets();
         }
 
         // Old btnDashboard_Click: show the stats and reload them.
@@ -282,6 +288,7 @@ namespace PAYROLL
                 hostedEmployeeForm.Dispose();
                 hostedEmployeeForm = null;
             }
+            if (ticketsContent != null) ticketsContent.Visible = false;
             dashboardContent.Visible = true;
             headerTitle.Text = "Payroll Overview";
             RefreshData();
@@ -291,6 +298,7 @@ namespace PAYROLL
         private void ShowEmployee()
         {
             if (hostedEmployeeForm != null) return; // already open — keeps typed input
+            if (ticketsContent != null) ticketsContent.Visible = false;
             dashboardContent.Visible = false;
             headerTitle.Text = "Employee Management";
             hostedEmployeeForm = new Form1
@@ -301,6 +309,77 @@ namespace PAYROLL
             };
             contentHost.Controls.Add(hostedEmployeeForm);
             hostedEmployeeForm.Show();
+        }
+
+        // ------------------------------------------------------------------
+        // TICKETS — salary disputes filed by employees through their portal
+        // ------------------------------------------------------------------
+        private void ShowTickets()
+        {
+            if (hostedEmployeeForm != null)
+            {
+                contentHost.Controls.Remove(hostedEmployeeForm);
+                hostedEmployeeForm.Dispose();
+                hostedEmployeeForm = null;
+            }
+            dashboardContent.Visible = false;
+            headerTitle.Text = "Salary Dispute Tickets";
+
+            if (ticketsContent == null)
+            {
+                ticketsContent = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg, Padding = new Padding(24) };
+                ticketsGrid = new DataGridView { Dock = DockStyle.Fill };
+                GridStyle.Apply(ticketsGrid);
+                ticketsGrid.ReadOnly = true;
+                ticketsGrid.CellDoubleClick += (s, e) => { if (e.RowIndex >= 0) RespondToSelectedTicket(); };
+                ticketsContent.Controls.Add(ticketsGrid);
+                contentHost.Controls.Add(ticketsContent);
+            }
+            ticketsContent.Visible = true;
+            ticketsContent.BringToFront();
+            RefreshTickets();
+        }
+
+        private void RefreshTickets()
+        {
+            try
+            {
+                var tickets = TicketService.LoadAll();
+                var table = new DataTable();
+                table.Columns.Add("TicketID", typeof(int));
+                table.Columns.Add("Employee");
+                table.Columns.Add("Subject");
+                table.Columns.Add("Status");
+                table.Columns.Add("Filed On");
+                foreach (var t in tickets)
+                    table.Rows.Add(t.TicketId, t.EmployeeName, t.Subject, t.Status, t.CreatedAt.ToString("MMM d, yyyy"));
+
+                ticketsGrid.DataSource = table;
+                ticketsGrid.Columns["TicketID"].Visible = false; // kept for lookups, not shown
+                ticketsGrid.Tag = tickets; // stash full rows (Message/AdminResponse) for the respond dialog
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Could not load tickets: " + ex.Message, "Database Error",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        // Double-click a ticket row to open, respond, and mark it resolved.
+        private void RespondToSelectedTicket()
+        {
+            if (ticketsGrid.CurrentRow == null) return;
+            int ticketId = Convert.ToInt32(ticketsGrid.CurrentRow.Cells["TicketID"].Value);
+            var tickets = ticketsGrid.Tag as List<TicketRow>;
+            var ticket = tickets?.Find(t => t.TicketId == ticketId);
+            if (ticket == null) return;
+
+            using var form = new TicketResponseForm(ticket);
+            if (form.ShowDialog(this) == DialogResult.OK)
+            {
+                TicketService.Respond(ticketId, form.Response);
+                RefreshTickets();
+            }
         }
 
         // Old btnLogout_Click, preserved.
