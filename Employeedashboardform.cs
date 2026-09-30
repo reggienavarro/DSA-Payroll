@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Data;
 using System.Drawing;
+using System.Linq;
 using System.Windows.Forms;
 using MySqlConnector;
 using PAYROLL.UI;
@@ -18,7 +20,7 @@ namespace PAYROLL
         private Label headerTitle = null!;
         private Panel contentHost = null!;
         private Label warningBanner = null!;
-        private SidebarButton navPayroll = null!, navTickets = null!;
+        private SidebarButton navPayroll = null!, navCalendar = null!, navTickets = null!;
 
         public EmployeeDashboardForm(string username, int employeeId)
         {
@@ -68,10 +70,13 @@ namespace PAYROLL
                 WrapContents = false, BackColor = Theme.Navy, Padding = new Padding(0, 12, 0, 0)
             };
             navPayroll = new SidebarButton { Text = "My Payroll", Icon = IconKind.Chart, Width = 224, Height = 46, Margin = new Padding(0), Active = true };
+            navCalendar = new SidebarButton { Text = "My Calendar", Icon = IconKind.Calendar, Width = 224, Height = 46, Margin = new Padding(0) };
             navTickets = new SidebarButton { Text = "My Tickets", Icon = IconKind.Bell, Width = 224, Height = 46, Margin = new Padding(0) };
             navPayroll.Click += (s, e) => Navigate("payroll");
+            navCalendar.Click += (s, e) => Navigate("calendar");
             navTickets.Click += (s, e) => Navigate("tickets");
             nav.Controls.Add(navPayroll);
+            nav.Controls.Add(navCalendar);
             nav.Controls.Add(navTickets);
 
             var logoutBar = new Panel { Dock = DockStyle.Bottom, Height = 60, BackColor = Theme.Navy };
@@ -128,8 +133,10 @@ namespace PAYROLL
         private void Navigate(string view)
         {
             navPayroll.Active = view == "payroll";
+            navCalendar.Active = view == "calendar";
             navTickets.Active = view == "tickets";
             navPayroll.Invalidate();
+            navCalendar.Invalidate();
             navTickets.Invalidate();
 
             contentHost.Controls.Clear();
@@ -139,6 +146,11 @@ namespace PAYROLL
             {
                 headerTitle.Text = "My Payroll";
                 ShowPayroll();
+            }
+            else if (view == "calendar")
+            {
+                headerTitle.Text = "My Calendar";
+                ShowCalendar();
             }
             else
             {
@@ -259,6 +271,142 @@ namespace PAYROLL
             panel.Controls.Add(deductionsSection);
             panel.Controls.Add(disputeBtn);
             contentHost.Controls.Add(panel);
+        }
+
+        private void ShowCalendar()
+        {
+            var panel = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg };
+            var calendar = new MonthCalendar
+            {
+                Location = new Point(0, 0),
+                MaxSelectionCount = 1,
+                CalendarDimensions = new Size(1, 1),
+                FirstDayOfWeek = Day.Sunday,
+                BackColor = Color.White
+            };
+            var timeInLabel = new Label
+            {
+                Text = "TIME IN", Location = new Point(250, 8), AutoSize = true,
+                Font = Theme.SmallBold, ForeColor = Theme.TextGray, BackColor = Theme.Bg
+            };
+            var timeInValue = new DateTimePicker
+            {
+                Location = new Point(250, 30), Width = 120, Format = DateTimePickerFormat.Time,
+                ShowUpDown = true, Value = DateTime.Now
+            };
+            var timeIn = new ModernButton
+            {
+                Text = "Record", Location = new Point(380, 27), Size = new Size(100, 36), SurroundColor = Theme.Bg
+            };
+            var timeOutLabel = new Label
+            {
+                Text = "TIME OUT", Location = new Point(250, 76), AutoSize = true,
+                Font = Theme.SmallBold, ForeColor = Theme.TextGray, BackColor = Theme.Bg
+            };
+            var timeOutValue = new DateTimePicker
+            {
+                Location = new Point(250, 98), Width = 120, Format = DateTimePickerFormat.Time,
+                ShowUpDown = true, Value = DateTime.Now
+            };
+            var timeOut = new ModernButton
+            {
+                Text = "Record", Location = new Point(380, 95), Size = new Size(100, 36), SurroundColor = Theme.Bg
+            };
+            var reportAbsence = new ModernButton
+            {
+                Text = "Report Absence", Location = new Point(250, 150), Size = new Size(160, 36), SurroundColor = Theme.Bg
+            };
+            var recordsGrid = new DataGridView
+            {
+                Location = new Point(0, 210), Size = new Size(850, 360),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom,
+                ReadOnly = true
+            };
+            panel.Resize += (s, e) => recordsGrid.Size = new Size(panel.ClientSize.Width, Math.Max(120, panel.ClientSize.Height - 220));
+            GridStyle.Apply(recordsGrid);
+
+            void RefreshCalendar()
+            {
+                DateTime selected = calendar.SelectionStart.Date;
+                DateTime monthStart = new DateTime(selected.Year, selected.Month, 1);
+                DateTime monthEnd = monthStart.AddMonths(1).AddDays(-1);
+                List<Holiday> holidays;
+                List<AttendanceRecord> attendance;
+                try
+                {
+                    holidays = CompanyService.ListHolidays(selected.Year);
+                    attendance = AttendanceService.ListForRange(monthStart, monthEnd, employeeId);
+                }
+                catch (Exception ex)
+                {
+                    warningBanner.Text = "Could not load your calendar: " + ex.Message;
+                    warningBanner.Visible = true;
+                    return;
+                }
+                var records = new DataTable();
+                records.Columns.Add("Date");
+                records.Columns.Add("Event");
+                records.Columns.Add("Type");
+                records.Columns.Add("Time In");
+                records.Columns.Add("Time Out");
+                calendar.RemoveAllBoldedDates();
+
+                foreach (var holiday in holidays)
+                {
+                    if (holiday.HolidayDate < monthStart || holiday.HolidayDate > monthEnd) continue;
+                    calendar.AddBoldedDate(holiday.HolidayDate.Date);
+                }
+                foreach (var holiday in holidays.Where(item => item.HolidayDate == selected))
+                    records.Rows.Add(selected.ToString("MMM d, yyyy"), holiday.HolidayName,
+                        holiday.HolidayType + " Holiday", "", "");
+                foreach (var record in attendance)
+                {
+                    if (record.AttendanceDate.Date != selected) continue;
+                    records.Rows.Add(record.AttendanceDate.ToString("MMM d, yyyy"), record.Status,
+                        "Attendance", record.TimeIn?.ToString(@"hh\:mm") ?? "",
+                        record.TimeOut?.ToString(@"hh\:mm") ?? "");
+                }
+                foreach (var record in attendance)
+                    calendar.AddBoldedDate(record.AttendanceDate.Date);
+                calendar.UpdateBoldedDates();
+                recordsGrid.DataSource = records;
+                timeIn.Enabled = selected == DateTime.Today;
+                timeOut.Enabled = selected == DateTime.Today;
+                reportAbsence.Enabled = selected <= DateTime.Today;
+            }
+
+            calendar.DateChanged += (s, e) => RefreshCalendar();
+            timeIn.Click += (s, e) =>
+            {
+                try { AttendanceService.RecordTimeIn(employeeId, timeInValue.Value.TimeOfDay); RefreshCalendar(); }
+                catch (Exception ex) { MessageBox.Show(ex.Message, "Attendance", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+            };
+            timeOut.Click += (s, e) =>
+            {
+                try { AttendanceService.RecordTimeOut(employeeId, timeOutValue.Value.TimeOfDay); RefreshCalendar(); }
+                catch (Exception ex) { MessageBox.Show(ex.Message, "Attendance", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+            };
+            reportAbsence.Click += (s, e) =>
+            {
+                try
+                {
+                    AttendanceService.ReportAbsence(employeeId, calendar.SelectionStart);
+                    RefreshCalendar();
+                }
+                catch (Exception ex) { MessageBox.Show(ex.Message, "Attendance", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+            };
+
+            panel.Controls.Add(calendar);
+            panel.Controls.Add(timeInLabel);
+            panel.Controls.Add(timeInValue);
+            panel.Controls.Add(timeIn);
+            panel.Controls.Add(timeOutLabel);
+            panel.Controls.Add(timeOutValue);
+            panel.Controls.Add(timeOut);
+            panel.Controls.Add(reportAbsence);
+            panel.Controls.Add(recordsGrid);
+            contentHost.Controls.Add(panel);
+            RefreshCalendar();
         }
 
         // ------------------------------------------------------------------

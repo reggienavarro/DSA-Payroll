@@ -28,7 +28,10 @@ namespace PAYROLL
         private readonly Panel contentHost = new Panel();      // dashboard view OR embedded Form1
         private readonly Panel dashboardContent = new Panel(); // cards + charts + employee table
         private Panel? ticketsContent;                         // built lazily on first visit
+        private Panel? payslipsContent;                        // built lazily on first visit
+        private CompanyPanel? companyContent;                  // built lazily on first visit
         private DataGridView ticketsGrid = null!;
+        private DataGridView payslipsGrid = null!;
         private Form? hostedEmployeeForm;                      // Form1, embedded like the old app did
         private bool loggingOut;
 
@@ -78,6 +81,8 @@ namespace PAYROLL
                 ("overview", "Overview", IconKind.Grid),
                 ("employee", "Employee", IconKind.Users),
                 ("tickets", "Tickets", IconKind.Bell),
+                ("payslips", "Payslips", IconKind.Card),
+                ("company", "Company", IconKind.Bank),
             };
 
             navButtons = new SidebarButton[items.Length];
@@ -277,6 +282,8 @@ namespace PAYROLL
             if (key == "overview") ShowOverview();
             else if (key == "employee") ShowEmployee();
             else if (key == "tickets") ShowTickets();
+            else if (key == "payslips") ShowPayslips();
+            else if (key == "company") ShowCompany();
         }
 
         // Old btnDashboard_Click: show the stats and reload them.
@@ -289,6 +296,8 @@ namespace PAYROLL
                 hostedEmployeeForm = null;
             }
             if (ticketsContent != null) ticketsContent.Visible = false;
+            if (payslipsContent != null) payslipsContent.Visible = false;
+            if (companyContent != null) companyContent.Visible = false;
             dashboardContent.Visible = true;
             headerTitle.Text = "Payroll Overview";
             RefreshData();
@@ -299,6 +308,8 @@ namespace PAYROLL
         {
             if (hostedEmployeeForm != null) return; // already open — keeps typed input
             if (ticketsContent != null) ticketsContent.Visible = false;
+            if (payslipsContent != null) payslipsContent.Visible = false;
+            if (companyContent != null) companyContent.Visible = false;
             dashboardContent.Visible = false;
             headerTitle.Text = "Employee Management";
             hostedEmployeeForm = new Form1
@@ -324,6 +335,8 @@ namespace PAYROLL
             }
             dashboardContent.Visible = false;
             headerTitle.Text = "Salary Dispute Tickets";
+            if (payslipsContent != null) payslipsContent.Visible = false;
+            if (companyContent != null) companyContent.Visible = false;
 
             if (ticketsContent == null)
             {
@@ -380,6 +393,99 @@ namespace PAYROLL
                 TicketService.Respond(ticketId, form.Response);
                 RefreshTickets();
             }
+        }
+
+        // ------------------------------------------------------------------
+        // PAYSLIPS — itemized, cutoff-based payslip history + generation
+        // ------------------------------------------------------------------
+        private void ShowPayslips()
+        {
+            if (hostedEmployeeForm != null)
+            {
+                contentHost.Controls.Remove(hostedEmployeeForm);
+                hostedEmployeeForm.Dispose();
+                hostedEmployeeForm = null;
+            }
+            dashboardContent.Visible = false;
+            if (ticketsContent != null) ticketsContent.Visible = false;
+            if (companyContent != null) companyContent.Visible = false;
+            headerTitle.Text = "Payslips";
+
+            if (payslipsContent == null)
+            {
+                payslipsContent = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg, Padding = new Padding(24) };
+
+                var hint = new Panel { Dock = DockStyle.Top, Height = 40, BackColor = Theme.Bg };
+                var hintLabel = new Label
+                {
+                    Text = "This is payslip history. To generate a new payslip, open the Employee screen and select an employee.",
+                    Font = Theme.Small, ForeColor = Theme.TextGray, AutoSize = true, Location = new Point(0, 8), BackColor = Theme.Bg
+                };
+                hint.Controls.Add(hintLabel);
+
+                payslipsGrid = new DataGridView { Dock = DockStyle.Fill, ReadOnly = true };
+                GridStyle.Apply(payslipsGrid);
+
+                payslipsContent.Controls.Add(payslipsGrid);
+                payslipsContent.Controls.Add(hint);
+                contentHost.Controls.Add(payslipsContent);
+            }
+            payslipsContent.Visible = true;
+            payslipsContent.BringToFront();
+            RefreshPayslips();
+        }
+
+        private void RefreshPayslips()
+        {
+            try
+            {
+                var payslips = PayslipService.LoadAll();
+                var table = new DataTable();
+                table.Columns.Add("Employee");
+                table.Columns.Add("Cutoff");
+                table.Columns.Add("No. of Days", typeof(decimal));
+                table.Columns.Add("Net Pay");
+                table.Columns.Add("Total Amount Receivable");
+                foreach (var p in payslips)
+                    table.Rows.Add(
+                        p.EmployeeName,
+                        $"{p.CutoffStart:MMM d} - {p.CutoffEnd:MMM d, yyyy}",
+                        p.NoOfDays,
+                        Theme.Money(p.NetPay),
+                        Theme.Money(p.TotalAmountReceivable));
+                payslipsGrid.DataSource = table;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Could not load payslips: " + ex.Message, "Database Error",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // COMPANY — payroll defaults, holiday calendar, departments
+        // ------------------------------------------------------------------
+        private void ShowCompany()
+        {
+            if (hostedEmployeeForm != null)
+            {
+                contentHost.Controls.Remove(hostedEmployeeForm);
+                hostedEmployeeForm.Dispose();
+                hostedEmployeeForm = null;
+            }
+            dashboardContent.Visible = false;
+            if (ticketsContent != null) ticketsContent.Visible = false;
+            if (payslipsContent != null) payslipsContent.Visible = false;
+            headerTitle.Text = "Company Settings";
+
+            if (companyContent == null)
+            {
+                companyContent = new CompanyPanel { Dock = DockStyle.Fill };
+                contentHost.Controls.Add(companyContent);
+            }
+            companyContent.Visible = true;
+            companyContent.BringToFront();
+            companyContent.RefreshAll();
         }
 
         // Old btnLogout_Click, preserved.
