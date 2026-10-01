@@ -148,7 +148,7 @@ namespace PAYROLL
             };
 
             var addStaff = new ModernButton { Text = "Add New Staff", ShowPlus = true, Size = new Size(162, 38) };
-            addStaff.Click += (s, e) => ShowEmployee(); // Form1 contains the ADD screen
+            addStaff.Click += (s, e) => Navigate("employee"); // Form1 contains the ADD screen; Navigate also moves the sidebar highlight
 
             var bell = new IconButton { Icon = IconKind.Bell, Size = new Size(40, 40), Margin = new Padding(14, 0, 0, 0) };
             bell.Click += (s, e) => MessageBox.Show("You have no new notifications.", "Notifications");
@@ -197,7 +197,7 @@ namespace PAYROLL
             GridStyle.Apply(employeeGrid);
             employeeGrid.CellPainting += GridStyle.PaintStatusBadges; // activates if a Status column exists
             employeeGrid.DataError += (s, e) => { e.ThrowException = false; };
-            employeeGrid.CellDoubleClick += (s, e) => { if (e.RowIndex >= 0) ShowEmployee(); };
+            employeeGrid.CellDoubleClick += (s, e) => { if (e.RowIndex >= 0) Navigate("employee"); };
 
             employeeSection.Controls.Add(employeeGrid);
             employeeSection.Controls.Add(empTitle);

@@ -390,7 +390,7 @@ namespace PAYROLL
                 // Confirmation
                 DialogResult result =
                     MessageBox.Show(
-                        "Are you sure you want to delete this employee?",
+                        "Delete this employee? This also permanently deletes their login account, payslips, tickets, and attendance records.",
                         "Confirm Delete",
                         MessageBoxButtons.YesNo,
                         MessageBoxIcon.Question);
@@ -400,38 +400,17 @@ namespace PAYROLL
                     return;
 
 
-                using (MySqlConnection connection =
-                    new MySqlConnection(connectionString))
+                int rowsAffected = DeleteEmployeeWithRelatedRecords(employeeID);
+
+                if (rowsAffected == 0)
                 {
-                    string query =
-                        "DELETE FROM Employees WHERE EmployeeID = @EmployeeID";
+                    MessageBox.Show(
+                        "Employee not found.",
+                        "Delete",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
 
-
-                    using (MySqlCommand command =
-                        new MySqlCommand(query, connection))
-                    {
-                        command.Parameters.AddWithValue(
-                            "@EmployeeID", employeeID);
-
-
-                        connection.Open();
-
-
-                        int rowsAffected =
-                            command.ExecuteNonQuery();
-
-
-                        if (rowsAffected == 0)
-                        {
-                            MessageBox.Show(
-                                "Employee not found.",
-                                "Delete",
-                                MessageBoxButtons.OK,
-                                MessageBoxIcon.Warning);
-
-                            return;
-                        }
-                    }
+                    return;
                 }
 
 
@@ -465,6 +444,50 @@ namespace PAYROLL
                     MessageBoxIcon.Error);
             }
         }
+        // Deletes the employee AND every row that points at them, in one
+        // transaction: either everything goes or nothing does. Child tables
+        // are deleted first because MySQL's foreign keys refuse to remove a
+        // parent row that still has children (that was the "Cannot delete or
+        // update a parent row" error).
+        private int DeleteEmployeeWithRelatedRecords(int employeeID)
+        {
+            using var connection = new MySqlConnection(connectionString);
+            connection.Open();
+            using var transaction = connection.BeginTransaction();
+            try
+            {
+                // Fixed list of table names (never user input). A table that
+                // doesn't exist yet (error 1146) simply has nothing to delete.
+                foreach (var table in new[] { "Attendance", "SalaryTickets", "Payslips", "Accounts" })
+                {
+                    try
+                    {
+                        using var cmd = new MySqlCommand(
+                            $"DELETE FROM {table} WHERE EmployeeID = @EmployeeID", connection, transaction);
+                        cmd.Parameters.AddWithValue("@EmployeeID", employeeID);
+                        cmd.ExecuteNonQuery();
+                    }
+                    catch (MySqlException ex) when (ex.Number == 1146) { }
+                }
+
+                int rows;
+                using (var cmd = new MySqlCommand(
+                    "DELETE FROM Employees WHERE EmployeeID = @EmployeeID", connection, transaction))
+                {
+                    cmd.Parameters.AddWithValue("@EmployeeID", employeeID);
+                    rows = cmd.ExecuteNonQuery();
+                }
+
+                transaction.Commit();
+                return rows;
+            }
+            catch
+            {
+                transaction.Rollback();
+                throw;
+            }
+        }
+
         private void ClearFields()
         {
             txtEmployeeID.Clear();
