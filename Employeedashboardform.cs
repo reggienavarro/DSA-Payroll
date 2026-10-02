@@ -166,13 +166,14 @@ namespace PAYROLL
         {
             string name = "", position = "";
             decimal basicSalary = 0, grossPay = 0, netPay = 0;
+            decimal hourlyRate = 0;
             bool found = false;
 
             try
             {
                 using var con = new MySqlConnection(AppConfig.ConnectionString);
                 using var cmd = new MySqlCommand(
-                    "SELECT EmployeeName, Position, BasicSalary, GrossPay, NetPay FROM Employees WHERE EmployeeID=@id", con);
+                    "SELECT EmployeeName, Position, BasicSalary, GrossPay, NetPay, HourlyRate FROM Employees WHERE EmployeeID=@id", con);
                 cmd.Parameters.AddWithValue("@id", employeeId);
                 con.Open();
                 using var reader = cmd.ExecuteReader();
@@ -184,6 +185,7 @@ namespace PAYROLL
                     basicSalary = Convert.ToDecimal(reader["BasicSalary"]);
                     grossPay = Convert.ToDecimal(reader["GrossPay"]);
                     netPay = Convert.ToDecimal(reader["NetPay"]);
+                    hourlyRate = Convert.ToDecimal(reader["HourlyRate"]);
                 }
             }
             catch (Exception ex)
@@ -200,6 +202,14 @@ namespace PAYROLL
                 return;
             }
 
+            var latestPayslip = PayslipService.LoadForEmployee(employeeId).FirstOrDefault();
+            if (latestPayslip != null)
+            {
+                basicSalary = latestPayslip.BasicPay;
+                grossPay = latestPayslip.Total;
+                netPay = latestPayslip.NetPay;
+            }
+
             var panel = new Panel { Dock = DockStyle.Fill, AutoScroll = true, BackColor = Theme.Bg };
 
             var nameLabel = new Label
@@ -209,28 +219,34 @@ namespace PAYROLL
             };
 
             var cardsRow = new Panel { Location = new Point(0, 34), Size = new Size(900, 130), BackColor = Theme.Bg };
-            var card1 = new DashboardCard { Location = new Point(0, 0), Size = new Size(280, 120), Icon = IconKind.Card, Title = "Basic Salary", Value = Theme.Money(basicSalary) };
+            var card1 = new DashboardCard { Location = new Point(0, 0), Size = new Size(280, 120), Icon = IconKind.Card, Title = "Basic Pay", Value = Theme.Money(basicSalary) };
             var card2 = new DashboardCard { Location = new Point(296, 0), Size = new Size(280, 120), Icon = IconKind.Arrows, Title = "Gross Pay", Value = Theme.Money(grossPay) };
             var card3 = new DashboardCard { Location = new Point(592, 0), Size = new Size(280, 120), Icon = IconKind.Bank, Title = "Net Pay", Value = Theme.Money(netPay) };
             cardsRow.Controls.Add(card1);
             cardsRow.Controls.Add(card2);
             cardsRow.Controls.Add(card3);
 
-            // Recomputed live from basic salary — always matches what Form1
-            // actually deducted, since both call the same calculator.
-            var d = DeductionsCalculator.Compute(basicSalary);
+            var estimatedMonthlyContributions = DeductionsCalculator.Compute(
+                DeductionsCalculator.MonthlySalaryFromHourlyRate(hourlyRate));
+            decimal sss = latestPayslip?.SssContribution ?? estimatedMonthlyContributions.sss / 2m;
+            decimal philHealth = latestPayslip?.PhilHealthContribution ?? estimatedMonthlyContributions.philHealth / 2m;
+            decimal pagIbig = latestPayslip?.HmdfContribution ?? estimatedMonthlyContributions.pagIbig / 2m;
+            decimal overbreak = latestPayslip?.LateUtOb ?? 0m;
+            decimal totalDeductions = latestPayslip?.TotalDeductions ?? sss + philHealth + pagIbig;
 
             var deductionsSection = new RoundedPanel { Location = new Point(0, 180), Width = 592 };
             var dTitle = new Label { Text = "Where your deductions come from", Font = Theme.H2, ForeColor = Theme.TextDark, AutoSize = true, Location = new Point(20, 16), BackColor = Color.White };
             deductionsSection.Controls.Add(dTitle);
 
-            var rows = new (string label, decimal value, string note)[]
+            var rows = new List<(string label, decimal value, string note)>
             {
-                ("SSS", d.sss, "5% employee share — 2025 rate"),
-                ("PhilHealth", d.philHealth, "2.5% employee share — 2025 rate"),
-                ("Pag-IBIG", d.pagIbig, "1–2% employee share, capped at ₱200"),
-                ("Withholding Tax", d.tax, "BIR TRAIN law monthly bracket"),
+                ("Overbreak", overbreak, "Excess break time above 60 minutes"),
+                ("SSS", sss, "Employee share for this cutoff"),
+                ("PhilHealth", philHealth, "Employee share for this cutoff"),
+                ("Pag-IBIG", pagIbig, "Employee share for this cutoff"),
             };
+            if (latestPayslip?.Loans > 0)
+                rows.Add(("Legacy Loan", latestPayslip.Loans, "Saved on an earlier payslip"));
             int ry = 56;
             foreach (var row in rows)
             {
@@ -244,7 +260,7 @@ namespace PAYROLL
                 ry += 44;
             }
             var totalLbl = new Label { Text = "Total Deductions", Font = Theme.BodyBold, ForeColor = Theme.TextDark, AutoSize = true, Location = new Point(20, ry + 6), BackColor = Color.White };
-            var totalVal = new Label { Text = Theme.Money(d.total), Font = Theme.ValueBig, ForeColor = Theme.Accent, AutoSize = true, BackColor = Color.White };
+            var totalVal = new Label { Text = Theme.Money(totalDeductions), Font = Theme.ValueBig, ForeColor = Theme.Accent, AutoSize = true, BackColor = Color.White };
             totalVal.Location = new Point(552 - totalVal.Width, ry);
             deductionsSection.Controls.Add(totalLbl);
             deductionsSection.Controls.Add(totalVal);
@@ -298,23 +314,55 @@ namespace PAYROLL
             {
                 Text = "Record", Location = new Point(380, 27), Size = new Size(100, 36), SurroundColor = Theme.Bg
             };
-            var timeOutLabel = new Label
+            var breakOutLabel = new Label
             {
-                Text = "TIME OUT", Location = new Point(250, 76), AutoSize = true,
+                Text = "BREAK OUT", Location = new Point(500, 8), AutoSize = true,
                 Font = Theme.SmallBold, ForeColor = Theme.TextGray, BackColor = Theme.Bg
             };
-            var timeOutValue = new DateTimePicker
+            var breakOutValue = new DateTimePicker
+            {
+                Location = new Point(500, 30), Width = 120, Format = DateTimePickerFormat.Time,
+                ShowUpDown = true, Value = DateTime.Now
+            };
+            var breakOut = new ModernButton
+            {
+                Text = "Record", Location = new Point(630, 27), Size = new Size(100, 36), SurroundColor = Theme.Bg
+            };
+            var breakInLabel = new Label
+            {
+                Text = "BREAK IN", Location = new Point(250, 76), AutoSize = true,
+                Font = Theme.SmallBold, ForeColor = Theme.TextGray, BackColor = Theme.Bg
+            };
+            var breakInValue = new DateTimePicker
             {
                 Location = new Point(250, 98), Width = 120, Format = DateTimePickerFormat.Time,
                 ShowUpDown = true, Value = DateTime.Now
             };
-            var timeOut = new ModernButton
+            var breakIn = new ModernButton
             {
                 Text = "Record", Location = new Point(380, 95), Size = new Size(100, 36), SurroundColor = Theme.Bg
+            };
+            var timeOutLabel = new Label
+            {
+                Text = "TIME OUT", Location = new Point(500, 76), AutoSize = true,
+                Font = Theme.SmallBold, ForeColor = Theme.TextGray, BackColor = Theme.Bg
+            };
+            var timeOutValue = new DateTimePicker
+            {
+                Location = new Point(500, 98), Width = 120, Format = DateTimePickerFormat.Time,
+                ShowUpDown = true, Value = DateTime.Now
+            };
+            var timeOut = new ModernButton
+            {
+                Text = "Record", Location = new Point(630, 95), Size = new Size(100, 36), SurroundColor = Theme.Bg
             };
             var reportAbsence = new ModernButton
             {
                 Text = "Report Absence", Location = new Point(250, 150), Size = new Size(160, 36), SurroundColor = Theme.Bg
+            };
+            var applyLeave = new ModernButton
+            {
+                Text = "Apply for Leave", Location = new Point(430, 150), Size = new Size(160, 36), SurroundColor = Theme.Bg
             };
             var recordsGrid = new DataGridView
             {
@@ -332,10 +380,12 @@ namespace PAYROLL
                 DateTime monthEnd = monthStart.AddMonths(1).AddDays(-1);
                 List<Holiday> holidays;
                 List<AttendanceRecord> attendance;
+                List<LeaveRequestRecord> leaveRequests;
                 try
                 {
                     holidays = CompanyService.ListHolidays(selected.Year);
                     attendance = AttendanceService.ListForRange(monthStart, monthEnd, employeeId);
+                    leaveRequests = LeaveService.ListForRange(monthStart, monthEnd, employeeId);
                 }
                 catch (Exception ex)
                 {
@@ -348,6 +398,8 @@ namespace PAYROLL
                 records.Columns.Add("Event");
                 records.Columns.Add("Type");
                 records.Columns.Add("Time In");
+                records.Columns.Add("Break Out");
+                records.Columns.Add("Break In");
                 records.Columns.Add("Time Out");
                 calendar.RemoveAllBoldedDates();
 
@@ -358,19 +410,40 @@ namespace PAYROLL
                 }
                 foreach (var holiday in holidays.Where(item => item.HolidayDate == selected))
                     records.Rows.Add(selected.ToString("MMM d, yyyy"), holiday.HolidayName,
-                        holiday.HolidayType + " Holiday", "", "");
+                        holiday.HolidayType + " Holiday", "", "", "", "");
                 foreach (var record in attendance)
                 {
                     if (record.AttendanceDate.Date != selected) continue;
                     records.Rows.Add(record.AttendanceDate.ToString("MMM d, yyyy"), record.Status,
                         "Attendance", record.TimeIn?.ToString(@"hh\:mm") ?? "",
+                        record.BreakOut?.ToString(@"hh\:mm") ?? "",
+                        record.BreakIn?.ToString(@"hh\:mm") ?? "",
                         record.TimeOut?.ToString(@"hh\:mm") ?? "");
+                }
+                foreach (var leave in leaveRequests)
+                {
+                    for (DateTime date = leave.StartDate.Date; date <= leave.EndDate.Date; date = date.AddDays(1))
+                        if (date >= monthStart && date <= monthEnd) calendar.AddBoldedDate(date);
+
+                    if (selected >= leave.StartDate.Date && selected <= leave.EndDate.Date)
+                    {
+                        string status = leave.Status == "Approved" && leave.Paid
+                            ? "Approved - Paid"
+                            : leave.Status;
+                        records.Rows.Add(
+                            $"{leave.StartDate:MMM d} - {leave.EndDate:MMM d, yyyy}",
+                            leave.Reason,
+                            "Leave: " + status,
+                            "", "", "", "");
+                    }
                 }
                 foreach (var record in attendance)
                     calendar.AddBoldedDate(record.AttendanceDate.Date);
                 calendar.UpdateBoldedDates();
                 recordsGrid.DataSource = records;
                 timeIn.Enabled = selected == DateTime.Today;
+                breakOut.Enabled = selected == DateTime.Today;
+                breakIn.Enabled = selected == DateTime.Today;
                 timeOut.Enabled = selected == DateTime.Today;
                 reportAbsence.Enabled = selected <= DateTime.Today;
             }
@@ -379,6 +452,16 @@ namespace PAYROLL
             timeIn.Click += (s, e) =>
             {
                 try { AttendanceService.RecordTimeIn(employeeId, timeInValue.Value.TimeOfDay); RefreshCalendar(); }
+                catch (Exception ex) { MessageBox.Show(ex.Message, "Attendance", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+            };
+            breakOut.Click += (s, e) =>
+            {
+                try { AttendanceService.RecordBreakOut(employeeId, breakOutValue.Value.TimeOfDay); RefreshCalendar(); }
+                catch (Exception ex) { MessageBox.Show(ex.Message, "Attendance", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+            };
+            breakIn.Click += (s, e) =>
+            {
+                try { AttendanceService.RecordBreakIn(employeeId, breakInValue.Value.TimeOfDay); RefreshCalendar(); }
                 catch (Exception ex) { MessageBox.Show(ex.Message, "Attendance", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
             };
             timeOut.Click += (s, e) =>
@@ -395,15 +478,27 @@ namespace PAYROLL
                 }
                 catch (Exception ex) { MessageBox.Show(ex.Message, "Attendance", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
             };
+            applyLeave.Click += (s, e) =>
+            {
+                using var form = new LeaveRequestForm(employeeId);
+                if (form.ShowDialog(this) == DialogResult.OK) RefreshCalendar();
+            };
 
             panel.Controls.Add(calendar);
             panel.Controls.Add(timeInLabel);
             panel.Controls.Add(timeInValue);
             panel.Controls.Add(timeIn);
+            panel.Controls.Add(breakOutLabel);
+            panel.Controls.Add(breakOutValue);
+            panel.Controls.Add(breakOut);
+            panel.Controls.Add(breakInLabel);
+            panel.Controls.Add(breakInValue);
+            panel.Controls.Add(breakIn);
             panel.Controls.Add(timeOutLabel);
             panel.Controls.Add(timeOutValue);
             panel.Controls.Add(timeOut);
             panel.Controls.Add(reportAbsence);
+            panel.Controls.Add(applyLeave);
             panel.Controls.Add(recordsGrid);
             contentHost.Controls.Add(panel);
             RefreshCalendar();

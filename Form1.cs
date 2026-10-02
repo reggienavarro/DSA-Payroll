@@ -13,6 +13,7 @@ namespace PAYROLL
         {
             InitializeComponent();
             txtDeductions.ReadOnly = true; // now auto-computed by DeductionsCalculator, not typed in
+            txtBasicSalary.Text = GetDefaultHourlyRate().ToString("0.00");
             BuildPayslipSection();
             LoadEmployees();
         }
@@ -91,7 +92,7 @@ namespace PAYROLL
             {
                 using (MySqlConnection connection = new MySqlConnection(connectionString))
                 {
-                    string query = "SELECT * FROM Employees";
+                    string query = "SELECT EmployeeID, EmployeeName, Position, HourlyRate FROM Employees ORDER BY EmployeeName";
 
                     MySqlDataAdapter adapter = new MySqlDataAdapter(query, connection);
 
@@ -114,42 +115,7 @@ namespace PAYROLL
 
         private void btnCalculate_Click(object sender, EventArgs e)
         {
-            try
-            {
-                decimal basicSalary = decimal.Parse(txtBasicSalary.Text);
-                decimal hoursWorked = decimal.Parse(txtHoursWorked.Text);
-                decimal overtimeHours = decimal.Parse(txtOvertimeHours.Text);
-
-                // Standard monthly working hours
-                decimal hourlyRate = basicSalary / 160m;
-
-                // Regular pay
-                decimal regularPay = hourlyRate * hoursWorked;
-
-                // Overtime pay = hourly rate × overtime hours × 1.25
-                decimal overtimePay = hourlyRate * overtimeHours * 1.25m;
-
-                // Gross pay
-                decimal grossPay = regularPay + overtimePay;
-
-                // Government-mandated deductions (SSS, PhilHealth, Pag-IBIG,
-                // withholding tax) computed from basic salary — no longer
-                // manually typed in, so it can't drift out of sync with the
-                // employee's actual salary bracket.
-                var d = DeductionsCalculator.Compute(basicSalary);
-                decimal deductions = d.total;
-
-                // Net pay
-                decimal netPay = grossPay - deductions;
-
-                // Display results
-                txtRegularPay.Text = regularPay.ToString("N2");
-                txtOvertimePay.Text = overtimePay.ToString("N2");
-                txtGrossPay.Text = grossPay.ToString("N2");
-                txtDeductions.Text = deductions.ToString("N2");
-                txtNetPay.Text = netPay.ToString("N2");
-            }
-            catch
+            if (!UpdatePayrollFields())
             {
                 MessageBox.Show(
                     "Please enter valid numbers for salary, hours worked, and overtime hours.",
@@ -159,23 +125,63 @@ namespace PAYROLL
             }
         }
 
+        private void EmployeePayrollInput_TextChanged(object? sender, EventArgs e)
+        {
+            UpdatePayrollFields();
+        }
+
+        private bool UpdatePayrollFields()
+        {
+            if (!decimal.TryParse(txtBasicSalary.Text, out decimal basicSalary))
+            {
+                txtDeductions.Clear();
+                txtRegularPay.Clear();
+                txtOvertimePay.Clear();
+                txtGrossPay.Clear();
+                txtNetPay.Clear();
+                return false;
+            }
+
+            decimal deductions = DeductionsCalculator.Compute(basicSalary).total;
+            txtDeductions.Text = deductions.ToString("N2");
+
+            if (!decimal.TryParse(txtHoursWorked.Text, out decimal hoursWorked) ||
+                !decimal.TryParse(txtOvertimeHours.Text, out decimal overtimeHours))
+            {
+                txtRegularPay.Clear();
+                txtOvertimePay.Clear();
+                txtGrossPay.Clear();
+                txtNetPay.Clear();
+                return false;
+            }
+
+            decimal hourlyRate = basicSalary / 160m;
+            decimal regularPay = hourlyRate * hoursWorked;
+            decimal overtimePay = hourlyRate * overtimeHours * 1.25m;
+            decimal grossPay = regularPay + overtimePay;
+            decimal netPay = grossPay - deductions;
+
+            txtRegularPay.Text = regularPay.ToString("N2");
+            txtOvertimePay.Text = overtimePay.ToString("N2");
+            txtGrossPay.Text = grossPay.ToString("N2");
+            txtNetPay.Text = netPay.ToString("N2");
+            return true;
+        }
+
         private void btnAdd_Click(object sender, EventArgs e)
         {
-
             try
             {
-                int employeeID = int.Parse(txtEmployeeID.Text);
-                string employeeName = txtEmployeeName.Text;
-                string position = txtPosition.Text;
-
-                decimal basicSalary = decimal.Parse(txtBasicSalary.Text);
-                decimal hoursWorked = decimal.Parse(txtHoursWorked.Text);
-                decimal overtimeHours = decimal.Parse(txtOvertimeHours.Text);
-                decimal deductions = decimal.Parse(txtDeductions.Text);
-
-                decimal overtimePay = decimal.Parse(txtOvertimePay.Text);
-                decimal grossPay = decimal.Parse(txtGrossPay.Text);
-                decimal netPay = decimal.Parse(txtNetPay.Text);
+                if (!TryGetEmployeeProfile(out int employeeID, out string employeeName,
+                    out string position, out decimal hourlyRate))
+                {
+                    MessageBox.Show(
+                        "Enter a valid employee ID, name, position, and hourly rate.",
+                        "Invalid Input",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+                    return;
+                }
 
                 using (MySqlConnection connection = new MySqlConnection(connectionString))
                 {
@@ -185,6 +191,7 @@ namespace PAYROLL
                     EmployeeID,
                     EmployeeName,
                     Position,
+                    HourlyRate,
                     BasicSalary,
                     HoursWorked,
                     OvertimeHours,
@@ -198,13 +205,14 @@ namespace PAYROLL
                     @EmployeeID,
                     @EmployeeName,
                     @Position,
-                    @BasicSalary,
-                    @HoursWorked,
-                    @OvertimeHours,
-                    @Deductions,
-                    @OvertimePay,
-                    @GrossPay,
-                    @NetPay
+                    @HourlyRate,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
                 )";
 
                     using (MySqlCommand command = new MySqlCommand(query, connection))
@@ -212,13 +220,7 @@ namespace PAYROLL
                         command.Parameters.AddWithValue("@EmployeeID", employeeID);
                         command.Parameters.AddWithValue("@EmployeeName", employeeName);
                         command.Parameters.AddWithValue("@Position", position);
-                        command.Parameters.AddWithValue("@BasicSalary", basicSalary);
-                        command.Parameters.AddWithValue("@HoursWorked", hoursWorked);
-                        command.Parameters.AddWithValue("@OvertimeHours", overtimeHours);
-                        command.Parameters.AddWithValue("@Deductions", deductions);
-                        command.Parameters.AddWithValue("@OvertimePay", overtimePay);
-                        command.Parameters.AddWithValue("@GrossPay", grossPay);
-                        command.Parameters.AddWithValue("@NetPay", netPay);
+                        command.Parameters.AddWithValue("@HourlyRate", hourlyRate);
 
                         connection.Open();
                         command.ExecuteNonQuery();
@@ -255,18 +257,16 @@ namespace PAYROLL
         {
             try
             {
-                int employeeID = int.Parse(txtEmployeeID.Text);
-                string employeeName = txtEmployeeName.Text;
-                string position = txtPosition.Text;
-
-                decimal basicSalary = decimal.Parse(txtBasicSalary.Text);
-                decimal hoursWorked = decimal.Parse(txtHoursWorked.Text);
-                decimal overtimeHours = decimal.Parse(txtOvertimeHours.Text);
-                decimal deductions = decimal.Parse(txtDeductions.Text);
-
-                decimal overtimePay = decimal.Parse(txtOvertimePay.Text);
-                decimal grossPay = decimal.Parse(txtGrossPay.Text);
-                decimal netPay = decimal.Parse(txtNetPay.Text);
+                if (!TryGetEmployeeProfile(out int employeeID, out string employeeName,
+                    out string position, out decimal hourlyRate))
+                {
+                    MessageBox.Show(
+                        "Enter a valid employee ID, name, position, and hourly rate.",
+                        "Invalid Input",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+                    return;
+                }
 
                 using (MySqlConnection connection = new MySqlConnection(connectionString))
                 {
@@ -275,13 +275,7 @@ namespace PAYROLL
                 SET
                     EmployeeName = @EmployeeName,
                     Position = @Position,
-                    BasicSalary = @BasicSalary,
-                    HoursWorked = @HoursWorked,
-                    OvertimeHours = @OvertimeHours,
-                    Deductions = @Deductions,
-                    OvertimePay = @OvertimePay,
-                    GrossPay = @GrossPay,
-                    NetPay = @NetPay
+                    HourlyRate = @HourlyRate
                 WHERE EmployeeID = @EmployeeID";
 
                     using (MySqlCommand command = new MySqlCommand(query, connection))
@@ -289,13 +283,7 @@ namespace PAYROLL
                         command.Parameters.AddWithValue("@EmployeeID", employeeID);
                         command.Parameters.AddWithValue("@EmployeeName", employeeName);
                         command.Parameters.AddWithValue("@Position", position);
-                        command.Parameters.AddWithValue("@BasicSalary", basicSalary);
-                        command.Parameters.AddWithValue("@HoursWorked", hoursWorked);
-                        command.Parameters.AddWithValue("@OvertimeHours", overtimeHours);
-                        command.Parameters.AddWithValue("@Deductions", deductions);
-                        command.Parameters.AddWithValue("@OvertimePay", overtimePay);
-                        command.Parameters.AddWithValue("@GrossPay", grossPay);
-                        command.Parameters.AddWithValue("@NetPay", netPay);
+                        command.Parameters.AddWithValue("@HourlyRate", hourlyRate);
 
                         connection.Open();
 
@@ -347,23 +335,10 @@ namespace PAYROLL
 
             DataGridViewRow row = dgvPayroll.Rows[e.RowIndex];
 
-            txtEmployeeID.Text = row.Cells[0].Value?.ToString();
-            txtEmployeeName.Text = row.Cells[1].Value?.ToString();
-            txtPosition.Text = row.Cells[2].Value?.ToString();
-            txtBasicSalary.Text = row.Cells[3].Value?.ToString();
-            txtHoursWorked.Text = row.Cells[4].Value?.ToString();
-            txtOvertimeHours.Text = row.Cells[5].Value?.ToString();
-            txtDeductions.Text = row.Cells[6].Value?.ToString();
-            txtOvertimePay.Text = row.Cells[7].Value?.ToString();
-            txtGrossPay.Text = row.Cells[8].Value?.ToString();
-            txtNetPay.Text = row.Cells[9].Value?.ToString();
-
-            decimal basicSalary = decimal.Parse(txtBasicSalary.Text);
-            decimal hoursWorked = decimal.Parse(txtHoursWorked.Text);
-
-            decimal regularPay = (basicSalary / 160m) * hoursWorked;
-
-            txtRegularPay.Text = regularPay.ToString("N2");
+            txtEmployeeID.Text = row.Cells["EmployeeID"].Value?.ToString();
+            txtEmployeeName.Text = row.Cells["EmployeeName"].Value?.ToString();
+            txtPosition.Text = row.Cells["Position"].Value?.ToString();
+            txtBasicSalary.Text = row.Cells["HourlyRate"].Value?.ToString();
         }
 
         private void btnDelete_Click(object sender, EventArgs e)
@@ -493,7 +468,7 @@ namespace PAYROLL
             txtEmployeeID.Clear();
             txtEmployeeName.Clear();
             txtPosition.Clear();
-            txtBasicSalary.Clear();
+            txtBasicSalary.Text = GetDefaultHourlyRate().ToString("0.00");
             txtHoursWorked.Clear();
             txtOvertimeHours.Clear();
             txtDeductions.Clear();
@@ -501,6 +476,24 @@ namespace PAYROLL
             txtOvertimePay.Clear();
             txtGrossPay.Clear();
             txtNetPay.Clear();
+        }
+
+        private bool TryGetEmployeeProfile(out int employeeID, out string employeeName,
+            out string position, out decimal hourlyRate)
+        {
+            employeeID = 0;
+            hourlyRate = 0;
+            employeeName = txtEmployeeName.Text.Trim();
+            position = txtPosition.Text.Trim();
+            return int.TryParse(txtEmployeeID.Text, out employeeID) &&
+                employeeName.Length > 0 && position.Length > 0 &&
+                decimal.TryParse(txtBasicSalary.Text, out hourlyRate) && hourlyRate > 0;
+        }
+
+        private static decimal GetDefaultHourlyRate()
+        {
+            try { return CompanyService.GetPayrollDefaults().DefaultHourlyRate; }
+            catch { return PayrollDefaults.DefaultHourlyRate; }
         }
 
         private void btnClear_Click(object sender, EventArgs e)

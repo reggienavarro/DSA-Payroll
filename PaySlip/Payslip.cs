@@ -48,6 +48,7 @@ namespace PAYROLL
     public static class PayrollDefaults
     {
         public const decimal RiceAllowance = 750m;
+        public const decimal DailyMeal = 0m;
         public const decimal Uniform = 208m;
         public const decimal Laundry = 150m;
         public const decimal Incentives = 1100m;

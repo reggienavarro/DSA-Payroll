@@ -126,7 +126,7 @@
             label4.Name = "label4";
             label4.Size = new Size(68, 15);
             label4.TabIndex = 6;
-            label4.Text = "Basic Salary";
+            label4.Text = "Hourly Rate";
             // 
             // txtHoursWorked
             // 
@@ -180,21 +180,15 @@
             // 
             grpEmployeeInfo.Controls.Add(label1);
             grpEmployeeInfo.Controls.Add(txtEmployeeID);
-            grpEmployeeInfo.Controls.Add(txtDeductions);
             grpEmployeeInfo.Controls.Add(label2);
-            grpEmployeeInfo.Controls.Add(label7);
             grpEmployeeInfo.Controls.Add(txtEmployeeName);
-            grpEmployeeInfo.Controls.Add(txtOvertimeHours);
             grpEmployeeInfo.Controls.Add(label3);
-            grpEmployeeInfo.Controls.Add(label6);
             grpEmployeeInfo.Controls.Add(txtPosition);
-            grpEmployeeInfo.Controls.Add(txtHoursWorked);
             grpEmployeeInfo.Controls.Add(label4);
-            grpEmployeeInfo.Controls.Add(label5);
             grpEmployeeInfo.Controls.Add(txtBasicSalary);
             grpEmployeeInfo.Location = new Point(12, 59);
             grpEmployeeInfo.Name = "grpEmployeeInfo";
-            grpEmployeeInfo.Size = new Size(380, 328);
+            grpEmployeeInfo.Size = new Size(380, 190);
             grpEmployeeInfo.TabIndex = 15;
             grpEmployeeInfo.TabStop = false;
             grpEmployeeInfo.Text = "EMPLOYEE INFORMATION";
@@ -236,7 +230,6 @@
             btnCalculate.TabIndex = 18;
             btnCalculate.Text = "Calculate";
             btnCalculate.UseVisualStyleBackColor = true;
-            btnCalculate.Click += btnCalculate_Click;
             // 
             // label8
             // 

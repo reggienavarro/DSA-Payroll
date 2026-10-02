@@ -2,33 +2,31 @@ using System;
 
 namespace PAYROLL
 {
-    // Computes the four standard Philippine payroll deductions from a basic
-    // monthly salary. Rates below are the official 2025 figures as of when
-    // this was written — SSS, PhilHealth, Pag-IBIG and BIR all revise these
-    // periodically, so double-check against their current circulars before
-    // relying on this for real payroll. Good enough for a student project;
-    // this is not legal or tax advice.
+    // Computes employee contributions from monthly basic salary. Verify agency
+    // schedules before using these estimates for production payroll.
     public static class DeductionsCalculator
     {
-        // SSS: 2025 rate = 15% total (10% employer / 5% employee).
-        // Monthly Salary Credit is floored at 5,000 and capped at 35,000.
+        public static decimal MonthlySalaryFromHourlyRate(decimal hourlyRate)
+            => Math.Round(hourlyRate * 8m * 5m * 52m / 12m, 2);
+
+        // Employee share is 5% of the SSS Monthly Salary Credit; the 2025
+        // schedule uses 500-peso credit increments, from 5,000 to 35,000.
         public static decimal Sss(decimal basicSalary)
         {
-            decimal msc = Math.Clamp(basicSalary, 5000m, 35000m);
+            decimal cappedSalary = Math.Clamp(basicSalary, 5000m, 35000m);
+            decimal msc = 5000m + Math.Floor((cappedSalary - 5000m) / 500m) * 500m;
             return Math.Round(msc * 0.05m, 2);
         }
 
-        // PhilHealth: 2025 rate = 5% total, split evenly (2.5% each side).
-        // Floor 10,000 / ceiling 100,000 monthly basic salary.
+        // PhilHealth: 5% total, split evenly between employee and employer.
         public static decimal PhilHealth(decimal basicSalary)
         {
             decimal basis = Math.Clamp(basicSalary, 10000m, 100000m);
             return Math.Round(basis * 0.025m, 2);
         }
 
-        // Pag-IBIG: employee share is 1% at/under ₱1,500, else 2%, applied to
-        // salary capped at the ₱10,000 Monthly Fund Salary ceiling — so the
-        // employee share tops out at ₱200/month.
+        // Pag-IBIG employee share is 1% at/under 1,500, else 2%, capped at
+        // the 10,000 Monthly Fund Salary ceiling.
         public static decimal PagIbig(decimal basicSalary)
         {
             decimal basis = Math.Min(basicSalary, 10000m);

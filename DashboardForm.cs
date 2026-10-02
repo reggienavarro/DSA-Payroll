@@ -480,7 +480,7 @@ namespace PAYROLL
 
             if (companyContent == null)
             {
-                companyContent = new CompanyPanel { Dock = DockStyle.Fill };
+                companyContent = new CompanyPanel(CurrentUser) { Dock = DockStyle.Fill };
                 contentHost.Controls.Add(companyContent);
             }
             companyContent.Visible = true;

@@ -182,19 +182,19 @@ namespace PAYROLL
                     int? employeeId = reader["EmployeeID"] is DBNull ? null : Convert.ToInt32(reader["EmployeeID"]);
                     reader.Close();
 
-                    if (role == "Admin")
+                    if (role is "Admin" or "HR" or "Cash Management")
                     {
                         var dashboard = new DashboardForm(username);
                         dashboard.Show();
                     }
-                    else if (employeeId.HasValue)
+                    else if (role == "Employee" && employeeId.HasValue)
                     {
                         var portal = new EmployeeDashboardForm(username, employeeId.Value);
                         portal.Show();
                     }
                     else
                     {
-                        ShowError("This account isn't linked to an employee record. Contact an admin.");
+                        ShowError("This account role is not supported. Contact an admin.");
                         return;
                     }
                     Hide();

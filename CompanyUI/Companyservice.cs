@@ -7,6 +7,7 @@ namespace PAYROLL
     public class PayrollDefaultsConfig
     {
         public decimal RiceAllowance;
+        public decimal DailyMeal;
         public decimal Uniform;
         public decimal Laundry;
         public decimal Incentives;
@@ -32,14 +33,16 @@ namespace PAYROLL
         public static PayrollDefaultsConfig GetPayrollDefaults()
         {
             using var con = new MySqlConnection(AppConfig.ConnectionString);
-            using var cmd = new MySqlCommand("SELECT * FROM PayrollDefaults WHERE ConfigID = 1", con);
             con.Open();
+            EnsureDailyMealColumn(con);
+            using var cmd = new MySqlCommand("SELECT * FROM PayrollDefaults WHERE ConfigID = 1", con);
             using var reader = cmd.ExecuteReader();
             if (reader.Read())
             {
                 return new PayrollDefaultsConfig
                 {
                     RiceAllowance = Convert.ToDecimal(reader["RiceAllowance"]),
+                    DailyMeal = Convert.ToDecimal(reader["DailyMeal"]),
                     Uniform = Convert.ToDecimal(reader["Uniform"]),
                     Laundry = Convert.ToDecimal(reader["Laundry"]),
                     Incentives = Convert.ToDecimal(reader["Incentives"]),
@@ -51,6 +54,7 @@ namespace PAYROLL
             return new PayrollDefaultsConfig
             {
                 RiceAllowance = PayrollDefaults.RiceAllowance,
+                DailyMeal = PayrollDefaults.DailyMeal,
                 Uniform = PayrollDefaults.Uniform,
                 Laundry = PayrollDefaults.Laundry,
                 Incentives = PayrollDefaults.Incentives,
@@ -61,18 +65,32 @@ namespace PAYROLL
         public static void SavePayrollDefaults(PayrollDefaultsConfig c)
         {
             using var con = new MySqlConnection(AppConfig.ConnectionString);
+            con.Open();
+            EnsureDailyMealColumn(con);
             using var cmd = new MySqlCommand(@"
                 UPDATE PayrollDefaults SET
-                    RiceAllowance=@RiceAllowance, Uniform=@Uniform, Laundry=@Laundry,
+                    RiceAllowance=@RiceAllowance, DailyMeal=@DailyMeal, Uniform=@Uniform, Laundry=@Laundry,
                     Incentives=@Incentives, DefaultHourlyRate=@DefaultHourlyRate
                 WHERE ConfigID = 1", con);
             cmd.Parameters.AddWithValue("@RiceAllowance", c.RiceAllowance);
+            cmd.Parameters.AddWithValue("@DailyMeal", c.DailyMeal);
             cmd.Parameters.AddWithValue("@Uniform", c.Uniform);
             cmd.Parameters.AddWithValue("@Laundry", c.Laundry);
             cmd.Parameters.AddWithValue("@Incentives", c.Incentives);
             cmd.Parameters.AddWithValue("@DefaultHourlyRate", c.DefaultHourlyRate);
-            con.Open();
             cmd.ExecuteNonQuery();
+        }
+
+        private static void EnsureDailyMealColumn(MySqlConnection con)
+        {
+            using var check = new MySqlCommand(@"
+                SELECT COUNT(*) FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'PayrollDefaults' AND COLUMN_NAME = 'DailyMeal'", con);
+            if (Convert.ToInt32(check.ExecuteScalar()) != 0) return;
+
+            using var alter = new MySqlCommand(
+                "ALTER TABLE PayrollDefaults ADD COLUMN DailyMeal DECIMAL(10,2) NOT NULL DEFAULT 0", con);
+            alter.ExecuteNonQuery();
         }
 
         // ---- Holidays ----

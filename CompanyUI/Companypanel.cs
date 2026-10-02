@@ -12,22 +12,26 @@ namespace PAYROLL
     // its content area, the same way Form1 gets embedded for "Employee."
     public class CompanyPanel : Panel
     {
-        private TextBox riceBox = null!, uniformBox = null!, laundryBox = null!, incentivesBox = null!, hourlyRateBox = null!;
+        private TextBox riceBox = null!, dailyMealBox = null!, uniformBox = null!, laundryBox = null!, incentivesBox = null!, hourlyRateBox = null!;
         private DataGridView calendarEventsGrid = null!;
         private MonthCalendar calendarMonth = null!;
         private Label calendarDateLabel = null!;
         private DataGridView departmentsGrid = null!;
+        private DataGridView leaveRequestsGrid = null!;
         private TextBox departmentName = null!;
+        private readonly string reviewerName;
         private readonly System.Windows.Forms.Timer calendarRefreshTimer = new() { Interval = 30000 };
 
-        public CompanyPanel()
+        public CompanyPanel(string reviewerName = "Management")
         {
+            this.reviewerName = reviewerName;
             BackColor = Theme.Bg;
             Padding = new Padding(24);
 
             var tabs = new TabControl { Dock = DockStyle.Fill };
             tabs.TabPages.Add(BuildDefaultsTab());
             tabs.TabPages.Add(BuildCalendarTab());
+            tabs.TabPages.Add(BuildLeaveRequestsTab());
             tabs.TabPages.Add(BuildDepartmentsTab());
             Controls.Add(tabs);
 
@@ -42,6 +46,7 @@ namespace PAYROLL
         {
             LoadDefaults();
             LoadCalendar();
+            LoadLeaveRequests();
             LoadDepartments();
         }
 
@@ -51,7 +56,7 @@ namespace PAYROLL
         private TabPage BuildDefaultsTab()
         {
             var page = new TabPage("Payroll Defaults") { BackColor = Theme.Bg, Padding = new Padding(20) };
-            var card = new RoundedPanel { Location = new Point(0, 0), Size = new Size(420, 320), SurroundColor = Theme.Bg };
+            var card = new RoundedPanel { Location = new Point(0, 0), Size = new Size(420, 360), SurroundColor = Theme.Bg };
 
             var info = new Label
             {
@@ -62,12 +67,13 @@ namespace PAYROLL
             };
 
             riceBox = AddDefaultField(card, "Rice Allowance", 70);
-            uniformBox = AddDefaultField(card, "Uniform", 120);
-            laundryBox = AddDefaultField(card, "Laundry", 170);
-            incentivesBox = AddDefaultField(card, "Incentives", 220);
-            hourlyRateBox = AddDefaultField(card, "Default Hourly Rate", 270);
+            dailyMealBox = AddDefaultField(card, "Daily Meal", 120);
+            uniformBox = AddDefaultField(card, "Uniform", 170);
+            laundryBox = AddDefaultField(card, "Laundry", 220);
+            incentivesBox = AddDefaultField(card, "Incentives", 270);
+            hourlyRateBox = AddDefaultField(card, "Default Hourly Rate", 320);
 
-            var saveBtn = new ModernButton { Text = "Save Defaults", Location = new Point(16, 316), Size = new Size(388, 40), SurroundColor = Theme.Bg };
+            var saveBtn = new ModernButton { Text = "Save Defaults", Location = new Point(16, 366), Size = new Size(388, 40), SurroundColor = Theme.Bg };
             saveBtn.Click += (s, e) =>
             {
                 try
@@ -75,6 +81,7 @@ namespace PAYROLL
                     CompanyService.SavePayrollDefaults(new PayrollDefaultsConfig
                     {
                         RiceAllowance = ParseOrZero(riceBox),
+                        DailyMeal = ParseOrZero(dailyMealBox),
                         Uniform = ParseOrZero(uniformBox),
                         Laundry = ParseOrZero(laundryBox),
                         Incentives = ParseOrZero(incentivesBox),
@@ -111,6 +118,7 @@ namespace PAYROLL
             {
                 var d = CompanyService.GetPayrollDefaults();
                 riceBox.Text = d.RiceAllowance.ToString("0.00");
+                dailyMealBox.Text = d.DailyMeal.ToString("0.00");
                 uniformBox.Text = d.Uniform.ToString("0.00");
                 laundryBox.Text = d.Laundry.ToString("0.00");
                 incentivesBox.Text = d.Incentives.ToString("0.00");
@@ -171,11 +179,24 @@ namespace PAYROLL
 
             calendarEventsGrid = new DataGridView { Dock = DockStyle.Fill, ReadOnly = true };
             GridStyle.Apply(calendarEventsGrid);
+            var eventsPanel = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg };
+            var toolbar = new Panel { Dock = DockStyle.Top, Height = 44, BackColor = Theme.Bg };
+            var approveOvertime = new ModernButton
+            {
+                Text = "Approve Selected OT",
+                Location = new Point(0, 4),
+                Size = new Size(190, 34),
+                SurroundColor = Theme.Bg
+            };
+            approveOvertime.Click += (s, e) => ApproveSelectedOvertime();
+            toolbar.Controls.Add(approveOvertime);
+            eventsPanel.Controls.Add(calendarEventsGrid);
+            eventsPanel.Controls.Add(toolbar);
 
             layout.Controls.Add(title, 0, 0);
             layout.Controls.Add(calendarDateLabel, 1, 0);
             layout.Controls.Add(calendarMonth, 0, 1);
-            layout.Controls.Add(calendarEventsGrid, 1, 1);
+            layout.Controls.Add(eventsPanel, 1, 1);
             page.Controls.Add(layout);
             return page;
         }
@@ -190,12 +211,23 @@ namespace PAYROLL
                 DateTime monthEnd = monthStart.AddMonths(1).AddDays(-1);
                 var holidays = CompanyService.ListHolidays(selected.Year);
                 var attendance = AttendanceService.ListForDate(selected);
+                var monthLeaveRequests = LeaveService.ListForRange(monthStart, monthEnd);
+                var leaveRequests = monthLeaveRequests.Where(leave =>
+                    selected >= leave.StartDate.Date && selected <= leave.EndDate.Date).ToList();
                 var table = new DataTable();
+                table.Columns.Add("EmployeeID", typeof(int));
+                table.Columns.Add("AttendanceDate", typeof(DateTime));
                 table.Columns.Add("Event");
                 table.Columns.Add("Category");
                 table.Columns.Add("Employee");
                 table.Columns.Add("Time In");
+                table.Columns.Add("Break Out");
+                table.Columns.Add("Break In");
                 table.Columns.Add("Time Out");
+                table.Columns.Add("Overtime Hours");
+                table.Columns.Add("Overtime Approval");
+                table.Columns.Add("OvertimeMinutes", typeof(int));
+                table.Columns.Add("OvertimeApproved", typeof(bool));
                 calendarMonth.RemoveAllBoldedDates();
                 foreach (var h in holidays)
                 {
@@ -204,19 +236,162 @@ namespace PAYROLL
                 }
                 foreach (var record in AttendanceService.ListForRange(monthStart, monthEnd))
                     calendarMonth.AddBoldedDate(record.AttendanceDate.Date);
+                foreach (var leave in monthLeaveRequests.Where(item => item.Status == "Approved" && item.Paid))
+                {
+                    DateTime leaveStart = leave.StartDate.Date < monthStart ? monthStart : leave.StartDate.Date;
+                    DateTime leaveEnd = leave.EndDate.Date > monthEnd ? monthEnd : leave.EndDate.Date;
+                    for (DateTime date = leaveStart; date <= leaveEnd; date = date.AddDays(1))
+                        calendarMonth.AddBoldedDate(date);
+                }
                 foreach (var h in holidays.Where(holiday => holiday.HolidayDate == selected))
-                    table.Rows.Add(h.HolidayName, h.HolidayType + " Holiday", "", "", "");
+                    table.Rows.Add(DBNull.Value, selected, h.HolidayName, h.HolidayType + " Holiday",
+                        "", "", "", "", "", "", DBNull.Value, DBNull.Value);
                 foreach (var record in attendance)
                 {
-                    table.Rows.Add(record.Status, "Attendance", record.EmployeeName,
-                        record.TimeIn?.ToString(@"hh\:mm") ?? "", record.TimeOut?.ToString(@"hh\:mm") ?? "");
+                    int overtimeMinutes = record.TimeOut.HasValue ? AttendanceService.GetOvertimeMinutes(record) : 0;
+                    table.Rows.Add(record.EmployeeId, record.AttendanceDate.Date, record.Status, "Attendance", record.EmployeeName,
+                        record.TimeIn?.ToString(@"hh\:mm") ?? "",
+                        record.BreakOut?.ToString(@"hh\:mm") ?? "",
+                        record.BreakIn?.ToString(@"hh\:mm") ?? "",
+                        record.TimeOut?.ToString(@"hh\:mm") ?? "",
+                        (overtimeMinutes / 60m).ToString("0.##"),
+                        overtimeMinutes == 0 ? "—" : record.OvertimeApproved ? "Approved" : "Pending",
+                        overtimeMinutes, record.OvertimeApproved);
+                }
+                foreach (var leave in leaveRequests)
+                {
+                    string leaveStatus = leave.Status == "Approved" && leave.Paid
+                        ? "Approved (Paid)"
+                        : leave.Status;
+                    table.Rows.Add(DBNull.Value, selected, "Leave", leaveStatus, leave.EmployeeName,
+                        "", "", "", "", "", "", DBNull.Value, DBNull.Value);
                 }
                 calendarMonth.UpdateBoldedDates();
                 calendarEventsGrid.DataSource = table;
+                calendarEventsGrid.Columns["EmployeeID"]!.Visible = false;
+                calendarEventsGrid.Columns["AttendanceDate"]!.Visible = false;
+                calendarEventsGrid.Columns["OvertimeMinutes"]!.Visible = false;
+                calendarEventsGrid.Columns["OvertimeApproved"]!.Visible = false;
+
             }
             catch (Exception ex)
             {
                 MessageBox.Show("Could not load calendar: " + ex.Message, "Database Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void ApproveSelectedOvertime()
+        {
+            if (calendarEventsGrid.CurrentRow == null ||
+                calendarEventsGrid.CurrentRow.Cells["EmployeeID"].Value is not int employeeId ||
+                calendarEventsGrid.CurrentRow.Cells["OvertimeMinutes"].Value is not int overtimeMinutes ||
+                overtimeMinutes <= 0)
+            {
+                MessageBox.Show("Select a completed attendance row with overtime.", "Overtime Approval",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            if (Convert.ToBoolean(calendarEventsGrid.CurrentRow.Cells["OvertimeApproved"].Value))
+            {
+                MessageBox.Show("This overtime has already been approved.", "Overtime Approval",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            DateTime attendanceDate = Convert.ToDateTime(calendarEventsGrid.CurrentRow.Cells["AttendanceDate"].Value);
+            try
+            {
+                AttendanceService.SetOvertimeApproval(employeeId, attendanceDate, true);
+                LoadCalendar();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Could not approve overtime: " + ex.Message, "Overtime Approval",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        private TabPage BuildLeaveRequestsTab()
+        {
+            var page = new TabPage("Leave Requests") { BackColor = Theme.Bg, Padding = new Padding(20) };
+            var toolbar = new Panel { Dock = DockStyle.Top, Height = 44, BackColor = Theme.Bg };
+            var approve = new ModernButton
+            {
+                Text = "Approve as Paid", Location = new Point(0, 4), Size = new Size(150, 34),
+                SurroundColor = Theme.Bg
+            };
+            approve.Click += (s, e) => ReviewSelectedLeave(true);
+            var reject = new ModernButton
+            {
+                Text = "Reject", Location = new Point(160, 4), Size = new Size(100, 34),
+                SurroundColor = Theme.Bg, FillColor = Color.FromArgb(229, 231, 235)
+            };
+            reject.ForeColor = Theme.TextDark;
+            reject.Click += (s, e) => ReviewSelectedLeave(false);
+
+            leaveRequestsGrid = new DataGridView
+            {
+                Dock = DockStyle.Fill,
+                ReadOnly = true,
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                MultiSelect = false
+            };
+            GridStyle.Apply(leaveRequestsGrid);
+            toolbar.Controls.Add(approve);
+            toolbar.Controls.Add(reject);
+            page.Controls.Add(leaveRequestsGrid);
+            page.Controls.Add(toolbar);
+            return page;
+        }
+
+        private void LoadLeaveRequests()
+        {
+            try
+            {
+                var requests = LeaveService.ListForRange(new DateTime(2000, 1, 1), new DateTime(2100, 12, 31));
+                var table = new DataTable();
+                table.Columns.Add("LeaveRequestID", typeof(int));
+                table.Columns.Add("Employee");
+                table.Columns.Add("Start Date");
+                table.Columns.Add("End Date");
+                table.Columns.Add("Reason");
+                table.Columns.Add("Status");
+                table.Columns.Add("Paid", typeof(bool));
+                foreach (var request in requests)
+                    table.Rows.Add(request.LeaveRequestId, request.EmployeeName,
+                        request.StartDate.ToString("MMM d, yyyy"), request.EndDate.ToString("MMM d, yyyy"),
+                        request.Reason, request.Status, request.Paid);
+                leaveRequestsGrid.DataSource = table;
+                leaveRequestsGrid.Columns["LeaveRequestID"]!.Visible = false;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Could not load leave requests: " + ex.Message, "Leave Requests",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        private void ReviewSelectedLeave(bool approved)
+        {
+            if (leaveRequestsGrid.CurrentRow == null ||
+                leaveRequestsGrid.CurrentRow.Cells["LeaveRequestID"].Value is not int requestId)
+            {
+                MessageBox.Show("Select a leave request first.", "Leave Requests",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            try
+            {
+                LeaveService.Review(requestId, approved, reviewerName);
+                LoadLeaveRequests();
+                LoadCalendar();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Could not review leave request: " + ex.Message, "Leave Requests",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
 

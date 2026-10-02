@@ -16,7 +16,6 @@ namespace PAYROLL
         private readonly Dictionary<int, decimal> employeeRates = new(); // EmployeeID -> HourlyRate
         private readonly Dictionary<string, TextBox> fields = new();
         private readonly int? preselectEmployeeId;
-        private decimal reportedAbsenceDays;
 
         private ComboBox employeeCombo = null!;
         private DateTimePicker cutoffStart = null!, cutoffEnd = null!;
@@ -47,6 +46,7 @@ namespace PAYROLL
                 defaults = new PayrollDefaultsConfig
                 {
                     RiceAllowance = PayrollDefaults.RiceAllowance,
+                    DailyMeal = PayrollDefaults.DailyMeal,
                     Uniform = PayrollDefaults.Uniform,
                     Laundry = PayrollDefaults.Laundry,
                     Incentives = PayrollDefaults.Incentives,
@@ -61,11 +61,12 @@ namespace PAYROLL
                 new[]
                 {
                     ("riceAllowance", "Rice Allowance", defaults.RiceAllowance),
-                    ("dailyMeal", "Daily Meal (Graveyard Shift)", 0m),
+                    ("dailyMeal", "Daily Meal", defaults.DailyMeal),
                     ("uniform", "Uniform", defaults.Uniform),
                     ("laundry", "Laundry", defaults.Laundry),
                     ("totalOtPay", "Total OT Pay", 0m),
                     ("regHolPayPrem", "Regular Holidays", 0m),
+                    ("spHolPayPrem", "Special Holidays", 0m),
                     ("leaveWithPay", "Leave With Pay", 0m),
                     ("adjustment", "Adjustment", 0m),
                 }, out var totalRow, "TOTAL");
@@ -74,12 +75,10 @@ namespace PAYROLL
             BuildSection(content, ref y, "DEDUCTIONS",
                 new[]
                 {
-                    ("absences", "Absences", 0m),
-                    ("lateUtOb", "Late, UT+OB", 0m),
+                    ("lateUtOb", "Overbreak (> 1 hour)", 0m),
                     ("sss", "SSS Contribution", 0m),
                     ("philHealth", "PhilHealth Contribution", 0m),
                     ("hmdf", "HMDF Contribution", 0m),
-                    ("loans", "Loans", 0m),
                 }, out var totalDeductionsRow, "TOTAL DEDUCTIONS");
             totalDeductionsValue = totalDeductionsRow;
 
@@ -98,6 +97,10 @@ namespace PAYROLL
             totalBonusValue = totalBonusRow;
 
             totalReceivableValue = AddHighlightRow(content, ref y, "TOTAL AMOUNT RECEIVABLE", big: true);
+
+            foreach (string key in new[]
+                { "noOfDays", "hourlyRate", "totalOtPay", "regHolPayPrem", "spHolPayPrem", "leaveWithPay", "lateUtOb", "sss", "philHealth", "hmdf" })
+                fields[key].ReadOnly = true;
 
             var btnSave = new ModernButton
             {
@@ -130,17 +133,20 @@ namespace PAYROLL
             var cutoffLabel = new Label { Text = "CUTOFF PERIOD", Font = Theme.SmallBold, ForeColor = Theme.TextGray, AutoSize = true, Location = new Point(16, 70), BackColor = Color.White };
             cutoffStart = new DateTimePicker { Location = new Point(16, 90), Width = 256, Format = DateTimePickerFormat.Short };
             cutoffEnd = new DateTimePicker { Location = new Point(288, 90), Width = 256, Format = DateTimePickerFormat.Short };
-            cutoffStart.Value = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+            DateTime today = DateTime.Today;
+            int lastDay = DateTime.DaysInMonth(today.Year, today.Month);
+            cutoffStart.Value = new DateTime(today.Year, today.Month, today.Day <= 15 ? 1 : 16);
+            cutoffEnd.Value = new DateTime(today.Year, today.Month, today.Day <= 15 ? 15 : lastDay);
             cutoffStart.ValueChanged += (s, e) => RefreshAttendanceDefaults();
             cutoffEnd.ValueChanged += (s, e) => RefreshAttendanceDefaults();
 
             var daysLabel = new Label { Text = "NO. OF DAYS", Font = Theme.SmallBold, ForeColor = Theme.TextGray, AutoSize = true, Location = new Point(16, 126), BackColor = Color.White };
-            var daysBox = new TextBox { Location = new Point(16, 146), Width = 256, Text = "0" };
+            var daysBox = new TextBox { Location = new Point(16, 146), Width = 256, Text = "0", ReadOnly = true };
             daysBox.TextChanged += (s, e) => RecomputeBasicPay();
             fields["noOfDays"] = daysBox;
 
             var rateLabel = new Label { Text = "HOURLY RATE", Font = Theme.SmallBold, ForeColor = Theme.TextGray, AutoSize = true, Location = new Point(288, 126), BackColor = Color.White };
-            var rateBox = new TextBox { Location = new Point(288, 146), Width = 256, Text = defaultHourlyRate.ToString("0.00") };
+            var rateBox = new TextBox { Location = new Point(288, 146), Width = 256, Text = defaultHourlyRate.ToString("0.00"), ReadOnly = true };
             rateBox.TextChanged += (s, e) => RecomputeBasicPay();
             fields["hourlyRate"] = rateBox;
 
@@ -226,11 +232,21 @@ namespace PAYROLL
             try
             {
                 var summary = AttendanceService.GetSummary(item.Id, cutoffStart.Value, cutoffEnd.Value);
-                decimal dailyRate = ParseField("hourlyRate") * 8m;
-                reportedAbsenceDays = summary.AbsentDays;
-                fields["noOfDays"].Text = summary.PresentDays.ToString("0.##");
-                fields["absences"].Text = (summary.AbsentDays * dailyRate).ToString("0.00");
+                decimal hourlyRate = ParseField("hourlyRate");
+                decimal dailyRate = hourlyRate * 8m;
+                decimal paidLeaveDays = LeaveService.GetPaidWorkdays(item.Id, cutoffStart.Value, cutoffEnd.Value);
+                fields["noOfDays"].Text = (summary.RegularHours / 8m).ToString("0.##");
                 fields["regHolPayPrem"].Text = (summary.RegularHolidayDays * dailyRate).ToString("0.00");
+                fields["spHolPayPrem"].Text = (summary.SpecialHolidayDays * dailyRate * 0.3m).ToString("0.00");
+                fields["totalOtPay"].Text = (summary.ApprovedOvertimeHours * hourlyRate * 1.25m).ToString("0.00");
+                fields["leaveWithPay"].Text = (paidLeaveDays * dailyRate).ToString("0.00");
+                fields["lateUtOb"].Text = (summary.OverbreakMinutes * hourlyRate / 60m).ToString("0.00");
+
+                decimal monthlySalary = DeductionsCalculator.MonthlySalaryFromHourlyRate(hourlyRate);
+                var contributions = DeductionsCalculator.Compute(monthlySalary);
+                fields["sss"].Text = (contributions.sss / 2m).ToString("0.00");
+                fields["philHealth"].Text = (contributions.philHealth / 2m).ToString("0.00");
+                fields["hmdf"].Text = (contributions.pagIbig / 2m).ToString("0.00");
                 RecomputeBasicPay();
             }
             catch (Exception ex)
@@ -313,7 +329,7 @@ namespace PAYROLL
         private void RecomputeBasicPay()
         {
             decimal rate = ParseField("hourlyRate");
-            decimal days = ParseField("noOfDays") + reportedAbsenceDays;
+            decimal days = ParseField("noOfDays");
             fields["basicPay"].Text = (rate * 8m * days).ToString("0.00");
             RecomputeAll();
         }
@@ -327,8 +343,8 @@ namespace PAYROLL
                 ParseField("regHolPayPrem") + ParseField("leaveWithPay") + ParseField("adjustment");
             totalValue.Text = Theme.Money(total);
 
-            decimal totalDeductions = ParseField("absences") + ParseField("lateUtOb") + ParseField("sss") +
-                ParseField("philHealth") + ParseField("hmdf") + ParseField("loans");
+            decimal totalDeductions = ParseField("lateUtOb") + ParseField("sss") +
+                ParseField("philHealth") + ParseField("hmdf");
             totalDeductionsValue.Text = Theme.Money(totalDeductions);
 
             decimal netPay = total - totalDeductions;
@@ -354,9 +370,16 @@ namespace PAYROLL
                 MessageBox.Show("Select an employee first.", "Missing Info", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
-            if (ParseField("noOfDays") <= 0)
+            if (ParseField("noOfDays") <= 0 && ParseField("leaveWithPay") <= 0)
             {
-                MessageBox.Show("No. of Days must be greater than zero.", "Missing Info", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("No worked hours or approved paid leave were found for this cutoff.",
+                    "Missing Payroll Data", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            if (!IsSemiMonthlyCutoff(cutoffStart.Value.Date, cutoffEnd.Value.Date))
+            {
+                MessageBox.Show("Use a first-half cutoff (1-15) or second-half cutoff (16-last day) within one month.",
+                    "Invalid Cutoff", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
@@ -376,12 +399,12 @@ namespace PAYROLL
                 RegHolPayPrem = ParseField("regHolPayPrem"),
                 LeaveWithPay = ParseField("leaveWithPay"),
                 Adjustment = ParseField("adjustment"),
-                Absences = ParseField("absences"),
+                Absences = 0m,
                 LateUtOb = ParseField("lateUtOb"),
                 SssContribution = ParseField("sss"),
                 PhilHealthContribution = ParseField("philHealth"),
                 HmdfContribution = ParseField("hmdf"),
-                Loans = ParseField("loans"),
+                Loans = 0m,
                 AttendanceBonus = ParseField("attendanceBonus"),
                 TenureBonus = ParseField("tenureBonus"),
                 Oic = ParseField("oic"),
@@ -402,6 +425,13 @@ namespace PAYROLL
                 MessageBox.Show("Could not save payslip: " + ex.Message, "Database Error",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+        }
+
+        private static bool IsSemiMonthlyCutoff(DateTime start, DateTime end)
+        {
+            if (start.Year != end.Year || start.Month != end.Month) return false;
+            int lastDay = DateTime.DaysInMonth(end.Year, end.Month);
+            return start.Day == 1 && end.Day == 15 || start.Day == 16 && end.Day == lastDay;
         }
 
         private class EmployeeItem
