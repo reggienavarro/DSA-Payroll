@@ -340,7 +340,7 @@ namespace PAYROLL
 
             decimal total = ParseField("basicPay") + ParseField("riceAllowance") +
                 ParseField("dailyMeal") + ParseField("uniform") + ParseField("laundry") + ParseField("totalOtPay") +
-                ParseField("regHolPayPrem") + ParseField("leaveWithPay") + ParseField("adjustment");
+                ParseField("regHolPayPrem") + ParseField("spHolPayPrem") + ParseField("leaveWithPay") + ParseField("adjustment");
             totalValue.Text = Theme.Money(total);
 
             decimal totalDeductions = ParseField("lateUtOb") + ParseField("sss") +
@@ -397,6 +397,7 @@ namespace PAYROLL
                 Laundry = ParseField("laundry"),
                 TotalOtPay = ParseField("totalOtPay"),
                 RegHolPayPrem = ParseField("regHolPayPrem"),
+                SpHolPayPrem = ParseField("spHolPayPrem"),
                 LeaveWithPay = ParseField("leaveWithPay"),
                 Adjustment = ParseField("adjustment"),
                 Absences = 0m,

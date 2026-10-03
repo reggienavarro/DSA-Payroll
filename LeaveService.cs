@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using MySqlConnector;
 
 namespace PAYROLL
@@ -104,6 +105,13 @@ namespace PAYROLL
                 foreach (var holiday in CompanyService.ListHolidays(year))
                     if (holiday.HolidayType == "Regular") holidays.Add(holiday.HolidayDate.Date);
 
+            // A day the employee actually worked is already paid through their hours,
+            // so it must not be paid a second time as leave.
+            var workedDates = AttendanceService.ListForRange(start, end, employeeId)
+                .Where(record => record.Status == "Present")
+                .Select(record => record.AttendanceDate.Date)
+                .ToHashSet();
+
             var paidDates = new HashSet<DateTime>();
             foreach (var leave in approvedLeaves)
             {
@@ -111,7 +119,8 @@ namespace PAYROLL
                 DateTime leaveStart = leave.StartDate.Date < start.Date ? start.Date : leave.StartDate.Date;
                 DateTime leaveEnd = leave.EndDate.Date > end.Date ? end.Date : leave.EndDate.Date;
                 for (DateTime date = leaveStart; date <= leaveEnd; date = date.AddDays(1))
-                    if (date.DayOfWeek is not DayOfWeek.Saturday and not DayOfWeek.Sunday && !holidays.Contains(date))
+                    if (date.DayOfWeek is not DayOfWeek.Saturday and not DayOfWeek.Sunday
+                        && !holidays.Contains(date) && !workedDates.Contains(date))
                         paidDates.Add(date);
             }
             return paidDates.Count;

@@ -9,12 +9,14 @@ namespace PAYROLL
         public static decimal MonthlySalaryFromHourlyRate(decimal hourlyRate)
             => Math.Round(hourlyRate * 8m * 5m * 52m / 12m, 2);
 
-        // Employee share is 5% of the SSS Monthly Salary Credit; the 2025
-        // schedule uses 500-peso credit increments, from 5,000 to 35,000.
+        // Employee share is 5% of the SSS Monthly Salary Credit (MSC). The schedule moves
+        // in 500-peso steps from 5,000 to 35,000, and each step covers the salaries
+        // around it (4,750-5,249.99 -> 5,000; 5,250-5,749.99 -> 5,500), so the salary
+        // is rounded to the NEAREST 500, not down to the step below.
         public static decimal Sss(decimal basicSalary)
         {
-            decimal cappedSalary = Math.Clamp(basicSalary, 5000m, 35000m);
-            decimal msc = 5000m + Math.Floor((cappedSalary - 5000m) / 500m) * 500m;
+            decimal msc = Math.Floor((basicSalary + 250m) / 500m) * 500m;
+            msc = Math.Clamp(msc, 5000m, 35000m);
             return Math.Round(msc * 0.05m, 2);
         }
 

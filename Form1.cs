@@ -433,7 +433,7 @@ namespace PAYROLL
             {
                 // Fixed list of table names (never user input). A table that
                 // doesn't exist yet (error 1146) simply has nothing to delete.
-                foreach (var table in new[] { "Attendance", "SalaryTickets", "Payslips", "Accounts" })
+                foreach (var table in new[] { "Attendance", "LeaveRequests", "SalaryTickets", "Payslips", "Accounts" })
                 {
                     try
                     {

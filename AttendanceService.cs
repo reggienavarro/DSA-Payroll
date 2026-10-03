@@ -237,8 +237,11 @@ namespace PAYROLL
         {
             if (!record.TimeIn.HasValue || !record.TimeOut.HasValue) return 0;
             int elapsedMinutes = GetDurationMinutes(record.TimeIn.Value, record.TimeOut.Value);
+            // Worked time only loses the standard 60-minute break. Anything over that is
+            // overbreak, which the payslip deducts separately, so it must not also shrink
+            // the worked hours (that would charge the employee twice).
             int breakMinutes = record.BreakOut.HasValue && record.BreakIn.HasValue
-                ? GetBreakDurationMinutes(record)
+                ? Math.Min(GetBreakDurationMinutes(record), 60)
                 : 60;
             return Math.Max(0, elapsedMinutes - breakMinutes);
         }
