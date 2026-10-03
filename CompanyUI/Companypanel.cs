@@ -228,6 +228,7 @@ namespace PAYROLL
                 table.Columns.Add("Overtime Approval");
                 table.Columns.Add("OvertimeMinutes", typeof(int));
                 table.Columns.Add("OvertimeApproved", typeof(bool));
+                table.Columns.Add("Undertime");
                 calendarMonth.RemoveAllBoldedDates();
                 foreach (var h in holidays)
                 {
@@ -256,7 +257,7 @@ namespace PAYROLL
                         record.TimeOut?.ToString(@"hh\:mm") ?? "",
                         (overtimeMinutes / 60m).ToString("0.##"),
                         overtimeMinutes == 0 ? "—" : record.OvertimeApproved ? "Approved" : "Pending",
-                        overtimeMinutes, record.OvertimeApproved);
+                        overtimeMinutes, record.OvertimeApproved, UndertimeText(record));
                 }
                 foreach (var leave in leaveRequests)
                 {
@@ -278,6 +279,16 @@ namespace PAYROLL
             {
                 MessageBox.Show("Could not load calendar: " + ex.Message, "Database Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+        }
+
+        // e.g. "1h 20m (Needs follow-up)" until management has talked to the employee.
+        private static string UndertimeText(AttendanceRecord record)
+        {
+            int minutes = AttendanceService.GetUndertimeMinutes(record);
+            if (minutes == 0) return "—";
+            string state = record.UndertimeStatus == "Open" ? " (Needs follow-up)"
+                         : record.UndertimeStatus == "Resolved" ? " (Discussed)" : "";
+            return AttendanceService.FormatDuration(minutes) + state;
         }
 
         private void ApproveSelectedOvertime()
@@ -455,7 +466,7 @@ namespace PAYROLL
                 foreach (var d in departments)
                     table.Rows.Add(d.DepartmentId, d.DepartmentName);
                 departmentsGrid.DataSource = table;
-                departmentsGrid.Columns["DepartmentID"].Visible = false;
+                departmentsGrid.Columns["DepartmentID"]!.Visible = false;
             }
             catch (Exception ex)
             {

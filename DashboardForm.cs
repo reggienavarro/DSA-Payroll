@@ -23,6 +23,9 @@ namespace PAYROLL
         private Label employeeCountLabel = null!;
         private Label warningBanner = null!;
         private ProfileChip profileChip = null!;
+        private NotificationBell bell = null!;
+        private readonly System.Windows.Forms.Timer notificationTimer = new() { Interval = 30000 };
+        private int announcedNotices;   // open undertime notices management has already been told about
         private SidebarButton[] navButtons = Array.Empty<SidebarButton>();
 
         private readonly Panel contentHost = new Panel();      // dashboard view OR embedded Form1
@@ -53,6 +56,11 @@ namespace PAYROLL
             BuildSidebar();
 
             Load += (s, e) => RefreshData(); // old form loaded stats on startup too
+
+            // Undertime notices: badge on the bell as soon as the dashboard opens, then re-check every 30 s.
+            Shown += (s, e) => { RefreshNotifications(); notificationTimer.Start(); };
+            notificationTimer.Tick += (s, e) => RefreshNotifications();
+            FormClosed += (s, e) => notificationTimer.Dispose();
 
             FormClosing += (s, e) =>
             {
@@ -150,8 +158,8 @@ namespace PAYROLL
             var addStaff = new ModernButton { Text = "Add New Staff", ShowPlus = true, Size = new Size(162, 38) };
             addStaff.Click += (s, e) => Navigate("employee"); // Form1 contains the ADD screen; Navigate also moves the sidebar highlight
 
-            var bell = new IconButton { Icon = IconKind.Bell, Size = new Size(40, 40), Margin = new Padding(14, 0, 0, 0) };
-            bell.Click += (s, e) => MessageBox.Show("You have no new notifications.", "Notifications");
+            bell = new NotificationBell { Icon = IconKind.Bell, Size = new Size(40, 40), Margin = new Padding(14, 0, 0, 0) };
+            bell.Click += (s, e) => OpenNotifications();
 
             profileChip = new ProfileChip { Size = new Size(170, 40), Margin = new Padding(14, 0, 0, 0), UserName = CurrentUser };
 
@@ -368,7 +376,7 @@ namespace PAYROLL
                     table.Rows.Add(t.TicketId, t.EmployeeName, t.Subject, t.Status, t.CreatedAt.ToString("MMM d, yyyy"));
 
                 ticketsGrid.DataSource = table;
-                ticketsGrid.Columns["TicketID"].Visible = false; // kept for lookups, not shown
+                ticketsGrid.Columns["TicketID"]!.Visible = false; // kept for lookups, not shown
                 ticketsGrid.Tag = tickets; // stash full rows (Message/AdminResponse) for the respond dialog
             }
             catch (Exception ex)
@@ -489,6 +497,39 @@ namespace PAYROLL
         }
 
         // Old btnLogout_Click, preserved.
+        // ------------------------------------------------------------------
+        // NOTIFICATIONS: the bell counts undertime notices that management still
+        // has to follow up on (an employee timed out before completing 8 hours).
+        // ------------------------------------------------------------------
+        private void RefreshNotifications()
+        {
+            int open;
+            try { open = AttendanceService.CountOpenUndertimeNotices(); }
+            catch { return; }   // a failed check shouldn't interrupt the dashboard; the next one retries
+
+            bell.Count = open;
+            bell.Invalidate();
+
+            if (open <= announcedNotices) { announcedNotices = open; return; }
+
+            // New notice(s) since the last check. Pop up, but only while this window is the one
+            // being used, so it never lands on top of a form someone is filling in.
+            if (ActiveForm != this) return;
+            announcedNotices = open;
+            if (MessageBox.Show(this,
+                    $"{open} undertime notice(s) need follow-up.\n\n" +
+                    "An employee timed out before completing their duty. Open the notices now so you can talk to them?",
+                    "Undertime Notice", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
+                OpenNotifications();
+        }
+
+        private void OpenNotifications()
+        {
+            using var notices = new UndertimeNoticesForm(CurrentUser);
+            notices.ShowDialog(this);
+            RefreshNotifications();
+        }
+
         private void Logout()
         {
             loggingOut = true;
@@ -582,6 +623,27 @@ namespace PAYROLL
         }
 
         // Small circle with initials + user name (top-right, like the reference).
+        // The header bell, with a red badge showing how many notices are waiting.
+        private class NotificationBell : IconButton
+        {
+            [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+            public int Count { get; set; }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                base.OnPaint(e);
+                if (Count <= 0) return;
+
+                var g = e.Graphics;
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                var badge = new Rectangle(Width - 19, 1, 18, 18);
+                using (var fill = new SolidBrush(Color.FromArgb(239, 68, 68))) g.FillEllipse(fill, badge);
+                using var font = new Font("Segoe UI Semibold", 7.5f);
+                TextRenderer.DrawText(g, Count > 9 ? "9+" : Count.ToString(), font, badge, Color.White,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+            }
+        }
+
         private class ProfileChip : Control
         {
             [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]

@@ -401,6 +401,7 @@ namespace PAYROLL
                 records.Columns.Add("Break Out");
                 records.Columns.Add("Break In");
                 records.Columns.Add("Time Out");
+                records.Columns.Add("Undertime");
                 calendar.RemoveAllBoldedDates();
 
                 foreach (var holiday in holidays)
@@ -418,7 +419,8 @@ namespace PAYROLL
                         "Attendance", record.TimeIn?.ToString(@"hh\:mm") ?? "",
                         record.BreakOut?.ToString(@"hh\:mm") ?? "",
                         record.BreakIn?.ToString(@"hh\:mm") ?? "",
-                        record.TimeOut?.ToString(@"hh\:mm") ?? "");
+                        record.TimeOut?.ToString(@"hh\:mm") ?? "",
+                        UndertimeText(record));
                 }
                 foreach (var leave in leaveRequests)
                 {
@@ -461,12 +463,46 @@ namespace PAYROLL
             };
             breakIn.Click += (s, e) =>
             {
-                try { AttendanceService.RecordBreakIn(employeeId, breakInValue.Value.TimeOfDay); RefreshCalendar(); }
+                try
+                {
+                    var returnTime = breakInValue.Value.TimeOfDay;
+
+                    // An early break-in is allowed, but the employee is warned first.
+                    int unfinished = AttendanceService.GetUnfinishedBreakMinutes(employeeId, returnTime);
+                    if (unfinished > 0 && MessageBox.Show(
+                            $"Your one-hour break isn't finished yet ({unfinished} minute(s) left).\n\n" +
+                            "You can still break in, but the unfinished part of your break won't be counted on " +
+                            "your payslip. The full hour is still taken as your break, so working through it earns no extra pay.\n\n" +
+                            "Break in now?",
+                            "Break not finished", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+                        return;
+
+                    AttendanceService.RecordBreakIn(employeeId, returnTime);
+                    RefreshCalendar();
+                }
                 catch (Exception ex) { MessageBox.Show(ex.Message, "Attendance", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
             };
             timeOut.Click += (s, e) =>
             {
-                try { AttendanceService.RecordTimeOut(employeeId, timeOutValue.Value.TimeOfDay); RefreshCalendar(); }
+                try
+                {
+                    var leaveTime = timeOutValue.Value.TimeOfDay;
+
+                    // Timing out early is allowed, but the employee is warned first, and
+                    // management gets a notice to follow up on.
+                    int shortBy = AttendanceService.GetUndertimeMinutes(employeeId, leaveTime);
+                    if (shortBy > 0 && MessageBox.Show(
+                            $"You haven't completed your {AttendanceService.RegularDayMinutes / 60}-hour duty. " +
+                            $"You are {AttendanceService.FormatDuration(shortBy)} short.\n\n" +
+                            "That time will be deducted from your salary. Management will also be notified " +
+                            "of this undertime and may talk to you about the reason.\n\n" +
+                            "Time out anyway?",
+                            "Undertime", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+                        return;
+
+                    AttendanceService.RecordTimeOut(employeeId, leaveTime);
+                    RefreshCalendar();
+                }
                 catch (Exception ex) { MessageBox.Show(ex.Message, "Attendance", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
             };
             reportAbsence.Click += (s, e) =>
@@ -507,6 +543,17 @@ namespace PAYROLL
         // ------------------------------------------------------------------
         // MY TICKETS — this employee's own filed disputes + any response
         // ------------------------------------------------------------------
+        // What the employee sees in their own calendar: how short they were, and whether
+        // management has followed up yet.
+        private static string UndertimeText(AttendanceRecord record)
+        {
+            int minutes = AttendanceService.GetUndertimeMinutes(record);
+            if (minutes == 0) return "";
+            string state = record.UndertimeStatus == "Open" ? " (management notified)"
+                         : record.UndertimeStatus == "Resolved" ? " (discussed with management)" : "";
+            return AttendanceService.FormatDuration(minutes) + state;
+        }
+
         private void ShowTickets()
         {
             var panel = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg };
