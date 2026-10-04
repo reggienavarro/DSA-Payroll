@@ -433,6 +433,8 @@ namespace PAYROLL
 
                 payslipsGrid = new DataGridView { Dock = DockStyle.Fill, ReadOnly = true };
                 GridStyle.Apply(payslipsGrid);
+                payslipsGrid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+                payslipsGrid.CellDoubleClick += PayslipsGrid_CellDoubleClick;
 
                 payslipsContent.Controls.Add(payslipsGrid);
                 payslipsContent.Controls.Add(hint);
@@ -449,6 +451,8 @@ namespace PAYROLL
             {
                 var payslips = PayslipService.LoadAll();
                 var table = new DataTable();
+                table.Columns.Add("PayslipID", typeof(int));
+                table.Columns.Add("Department");
                 table.Columns.Add("Employee");
                 table.Columns.Add("Cutoff");
                 table.Columns.Add("No. of Days", typeof(decimal));
@@ -456,16 +460,38 @@ namespace PAYROLL
                 table.Columns.Add("Total Amount Receivable");
                 foreach (var p in payslips)
                     table.Rows.Add(
+                        p.PayslipId,
+                        p.DepartmentName,
                         p.EmployeeName,
                         $"{p.CutoffStart:MMM d} - {p.CutoffEnd:MMM d, yyyy}",
                         p.NoOfDays,
                         Theme.Money(p.NetPay),
                         Theme.Money(p.TotalAmountReceivable));
                 payslipsGrid.DataSource = table;
+                payslipsGrid.Columns["PayslipID"].Visible = false;
+                payslipsGrid.Columns["Department"].HeaderText = "Department";
             }
             catch (Exception ex)
             {
                 MessageBox.Show("Could not load payslips: " + ex.Message, "Database Error",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void PayslipsGrid_CellDoubleClick(object? sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex < 0 || payslipsGrid.Rows[e.RowIndex].Cells["PayslipID"].Value is not int id)
+                return;
+
+            try
+            {
+                var payslip = PayslipService.LoadAll().Find(p => p.PayslipId == id);
+                if (payslip != null)
+                    using (var form = new PayslipPreviewForm(payslip)) form.ShowDialog(this);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Could not open payslip: " + ex.Message, "Database Error",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }

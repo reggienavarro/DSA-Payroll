@@ -8,14 +8,38 @@ namespace PAYROLL
     public partial class Form1 : Form
     {
        string connectionString = AppConfig.ConnectionString;
+        private ComboBox departmentCombo = null!;
 
         public Form1()
         {
             InitializeComponent();
+            CompanyService.EnsureDepartmentSchema();
+            BuildDepartmentSelector();
             txtDeductions.ReadOnly = true; // now auto-computed by DeductionsCalculator, not typed in
             txtBasicSalary.Text = GetDefaultHourlyRate().ToString("0.00");
             BuildPayslipSection();
             LoadEmployees();
+        }
+
+        private void BuildDepartmentSelector()
+        {
+            grpEmployeeInfo.Height = 230;
+            var label = new Label { Text = "Department", Location = new Point(19, 190), AutoSize = true };
+            departmentCombo = new ComboBox { Location = new Point(169, 182), Width = 180,
+                DropDownStyle = ComboBoxStyle.DropDownList };
+            departmentCombo.DisplayMember = "DepartmentName";
+            departmentCombo.ValueMember = "DepartmentID";
+            using var con = new MySqlConnection(connectionString);
+            using var da = new MySqlDataAdapter("SELECT DepartmentID, DepartmentName FROM Departments ORDER BY DepartmentName", con);
+            var table = new DataTable();
+            da.Fill(table);
+            var empty = table.NewRow();
+            empty["DepartmentID"] = DBNull.Value;
+            empty["DepartmentName"] = "Unassigned";
+            table.Rows.InsertAt(empty, 0);
+            departmentCombo.DataSource = table;
+            grpEmployeeInfo.Controls.Add(label);
+            grpEmployeeInfo.Controls.Add(departmentCombo);
         }
 
         // ------------------------------------------------------------------
@@ -92,7 +116,10 @@ namespace PAYROLL
             {
                 using (MySqlConnection connection = new MySqlConnection(connectionString))
                 {
-                    string query = "SELECT EmployeeID, EmployeeName, Position, HourlyRate FROM Employees ORDER BY EmployeeName";
+                    string query = @"SELECT e.EmployeeID, e.EmployeeName, e.Position, e.HourlyRate,
+                                            e.DepartmentID, COALESCE(d.DepartmentName, 'Unassigned') AS DepartmentName
+                                     FROM Employees e LEFT JOIN Departments d ON d.DepartmentID = e.DepartmentID
+                                     ORDER BY DepartmentName, e.EmployeeName";
 
                     MySqlDataAdapter adapter = new MySqlDataAdapter(query, connection);
 
@@ -191,6 +218,7 @@ namespace PAYROLL
                     EmployeeID,
                     EmployeeName,
                     Position,
+                    DepartmentID,
                     HourlyRate,
                     BasicSalary,
                     HoursWorked,
@@ -205,6 +233,7 @@ namespace PAYROLL
                     @EmployeeID,
                     @EmployeeName,
                     @Position,
+                    @DepartmentID,
                     @HourlyRate,
                     0,
                     0,
@@ -220,6 +249,7 @@ namespace PAYROLL
                         command.Parameters.AddWithValue("@EmployeeID", employeeID);
                         command.Parameters.AddWithValue("@EmployeeName", employeeName);
                         command.Parameters.AddWithValue("@Position", position);
+                        command.Parameters.AddWithValue("@DepartmentID", GetDepartmentIdParameter());
                         command.Parameters.AddWithValue("@HourlyRate", hourlyRate);
 
                         connection.Open();
@@ -275,6 +305,7 @@ namespace PAYROLL
                 SET
                     EmployeeName = @EmployeeName,
                     Position = @Position,
+                    DepartmentID = @DepartmentID,
                     HourlyRate = @HourlyRate
                 WHERE EmployeeID = @EmployeeID";
 
@@ -283,6 +314,7 @@ namespace PAYROLL
                         command.Parameters.AddWithValue("@EmployeeID", employeeID);
                         command.Parameters.AddWithValue("@EmployeeName", employeeName);
                         command.Parameters.AddWithValue("@Position", position);
+                        command.Parameters.AddWithValue("@DepartmentID", GetDepartmentIdParameter());
                         command.Parameters.AddWithValue("@HourlyRate", hourlyRate);
 
                         connection.Open();
@@ -339,6 +371,15 @@ namespace PAYROLL
             txtEmployeeName.Text = row.Cells["EmployeeName"].Value?.ToString();
             txtPosition.Text = row.Cells["Position"].Value?.ToString();
             txtBasicSalary.Text = row.Cells["HourlyRate"].Value?.ToString();
+            if (row.Cells["DepartmentID"].Value is int departmentId)
+                departmentCombo.SelectedValue = departmentId;
+            else
+                departmentCombo.SelectedIndex = 0;
+        }
+
+        private object GetDepartmentIdParameter()
+        {
+            return departmentCombo.SelectedValue is int id ? id : DBNull.Value;
         }
 
         private void btnDelete_Click(object sender, EventArgs e)

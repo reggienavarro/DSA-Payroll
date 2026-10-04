@@ -10,6 +10,8 @@ namespace PAYROLL
         public int PayslipId;
         public int EmployeeId;
         public string EmployeeName = "";
+        public string DepartmentName = "Unassigned";
+        public DateTime CreatedAt;
         public DateTime CutoffStart;
         public DateTime CutoffEnd;
 

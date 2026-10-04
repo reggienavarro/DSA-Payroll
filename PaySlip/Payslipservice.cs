@@ -8,6 +8,7 @@ namespace PAYROLL
     {
         public static void Create(Payslip p)
         {
+            CompanyService.EnsureDepartmentSchema();
             using var con = new MySqlConnection(AppConfig.ConnectionString);
             using var cmd = new MySqlCommand(@"
                 INSERT INTO Payslips
@@ -80,13 +81,17 @@ namespace PAYROLL
 
         public static List<Payslip> LoadAll()
         {
+            CompanyService.EnsureDepartmentSchema();
             var list = new List<Payslip>();
             using var con = new MySqlConnection(AppConfig.ConnectionString);
             using var cmd = new MySqlCommand(@"
-                SELECT ps.*, e.EmployeeName
+                SELECT ps.*, e.EmployeeName,
+                       COALESCE(d.DepartmentName, 'Unassigned') AS DepartmentName
                 FROM Payslips ps
                 JOIN Employees e ON e.EmployeeID = ps.EmployeeID
-                ORDER BY ps.CreatedAt DESC", con);
+                LEFT JOIN Departments d ON d.DepartmentID = e.DepartmentID
+                WHERE ps.CreatedAt >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+                ORDER BY COALESCE(d.DepartmentName, 'Unassigned'), e.EmployeeName, ps.CutoffEnd DESC", con);
             con.Open();
             using var reader = cmd.ExecuteReader();
             while (reader.Read())
@@ -99,9 +104,11 @@ namespace PAYROLL
             var list = new List<Payslip>();
             using var con = new MySqlConnection(AppConfig.ConnectionString);
             using var cmd = new MySqlCommand(@"
-                SELECT ps.*, e.EmployeeName
+                SELECT ps.*, e.EmployeeName,
+                       COALESCE(d.DepartmentName, 'Unassigned') AS DepartmentName
                 FROM Payslips ps
                 JOIN Employees e ON e.EmployeeID = ps.EmployeeID
+                LEFT JOIN Departments d ON d.DepartmentID = e.DepartmentID
                 WHERE ps.EmployeeID = @EmployeeID
                 ORDER BY ps.CreatedAt DESC", con);
             cmd.Parameters.AddWithValue("@EmployeeID", employeeId);
@@ -117,6 +124,8 @@ namespace PAYROLL
             PayslipId = Convert.ToInt32(r["PayslipID"]),
             EmployeeId = Convert.ToInt32(r["EmployeeID"]),
             EmployeeName = r["EmployeeName"].ToString() ?? "",
+            DepartmentName = r["DepartmentName"].ToString() ?? "Unassigned",
+            CreatedAt = Convert.ToDateTime(r["CreatedAt"]),
             CutoffStart = Convert.ToDateTime(r["CutoffStart"]),
             CutoffEnd = Convert.ToDateTime(r["CutoffEnd"]),
             NoOfDays = Convert.ToDecimal(r["NoOfDays"]),

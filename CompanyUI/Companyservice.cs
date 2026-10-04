@@ -29,6 +29,29 @@ namespace PAYROLL
 
     public static class CompanyService
     {
+        public static void EnsureDepartmentSchema()
+        {
+            using var con = new MySqlConnection(AppConfig.ConnectionString);
+            con.Open();
+            using (var departments = new MySqlCommand(@"
+                CREATE TABLE IF NOT EXISTS Departments (
+                    DepartmentID INT AUTO_INCREMENT PRIMARY KEY,
+                    DepartmentName VARCHAR(150) NOT NULL UNIQUE
+                )", con))
+                departments.ExecuteNonQuery();
+
+            using var check = new MySqlCommand(@"
+                SELECT COUNT(*) FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'Employees'
+                  AND COLUMN_NAME = 'DepartmentID'", con);
+            if (Convert.ToInt32(check.ExecuteScalar()) == 0)
+            {
+                using var alter = new MySqlCommand(
+                    "ALTER TABLE Employees ADD COLUMN DepartmentID INT NULL", con);
+                alter.ExecuteNonQuery();
+            }
+        }
+
         // ---- Payroll defaults (single row, ConfigID = 1) ----
         public static PayrollDefaultsConfig GetPayrollDefaults()
         {
