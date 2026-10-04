@@ -119,6 +119,27 @@ namespace PAYROLL
             return list;
         }
 
+        public static List<Payslip> LoadRecentForEmployee(int employeeId)
+        {
+            var list = new List<Payslip>();
+            using var con = new MySqlConnection(AppConfig.ConnectionString);
+            using var cmd = new MySqlCommand(@"
+                SELECT ps.*, e.EmployeeName,
+                       COALESCE(d.DepartmentName, 'Unassigned') AS DepartmentName
+                FROM Payslips ps
+                JOIN Employees e ON e.EmployeeID = ps.EmployeeID
+                LEFT JOIN Departments d ON d.DepartmentID = e.DepartmentID
+                WHERE ps.EmployeeID = @EmployeeID
+                  AND ps.CreatedAt >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+                ORDER BY ps.CutoffEnd DESC, ps.CreatedAt DESC", con);
+            cmd.Parameters.AddWithValue("@EmployeeID", employeeId);
+            con.Open();
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+                list.Add(Map(reader));
+            return list;
+        }
+
         private static Payslip Map(MySqlDataReader r) => new Payslip
         {
             PayslipId = Convert.ToInt32(r["PayslipID"]),

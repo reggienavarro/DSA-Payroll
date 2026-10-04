@@ -173,18 +173,33 @@ namespace PAYROLL
 
             try
             {
+                CompanyService.EnsureDepartmentSchema();
                 using var connection = new MySqlConnection(connectionString);
                 connection.Open();
 
-                // Employee ID must already exist in the Employees table — this
-                // is what stops a random person from registering and seeing
-                // someone else's payroll.
-                using (var check = new MySqlCommand("SELECT COUNT(*) FROM Employees WHERE EmployeeID = @EmployeeID", connection))
+                // The employee must exist, be active, and not already have a login.
+                using (var check = new MySqlCommand(@"
+                    SELECT e.IsActive,
+                           EXISTS(SELECT 1 FROM Accounts a WHERE a.EmployeeID = e.EmployeeID) AS HasAccount
+                    FROM Employees e
+                    WHERE e.EmployeeID = @EmployeeID
+                    LIMIT 1", connection))
                 {
                     check.Parameters.AddWithValue("@EmployeeID", employeeId);
-                    if (Convert.ToInt32(check.ExecuteScalar()) == 0)
+                    using var employee = check.ExecuteReader();
+                    if (!employee.Read())
                     {
                         ShowError("No employee found with that Employee ID. Check with your admin.");
+                        return;
+                    }
+                    if (!Convert.ToBoolean(employee["IsActive"]))
+                    {
+                        ShowError("This employee is inactive and cannot register an account.");
+                        return;
+                    }
+                    if (Convert.ToBoolean(employee["HasAccount"]))
+                    {
+                        ShowError("An account has already been registered for this Employee ID.");
                         return;
                     }
                 }

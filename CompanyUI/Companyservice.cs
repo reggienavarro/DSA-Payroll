@@ -50,6 +50,21 @@ namespace PAYROLL
                     "ALTER TABLE Employees ADD COLUMN DepartmentID INT NULL", con);
                 alter.ExecuteNonQuery();
             }
+
+            EnsureEmployeeColumn(con, "HireDate", "DATE NULL");
+            EnsureEmployeeColumn(con, "IsActive", "TINYINT(1) NOT NULL DEFAULT 1");
+        }
+
+        private static void EnsureEmployeeColumn(MySqlConnection con, string column, string definition)
+        {
+            using var check = new MySqlCommand(@"
+                SELECT COUNT(*) FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'Employees' AND COLUMN_NAME = @Column", con);
+            check.Parameters.AddWithValue("@Column", column);
+            if (Convert.ToInt32(check.ExecuteScalar()) != 0) return;
+
+            using var alter = new MySqlCommand($"ALTER TABLE Employees ADD COLUMN {column} {definition}", con);
+            alter.ExecuteNonQuery();
         }
 
         // ---- Payroll defaults (single row, ConfigID = 1) ----

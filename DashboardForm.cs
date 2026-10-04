@@ -46,9 +46,9 @@ namespace PAYROLL
         {
             CurrentUser = loggedInUser;
             Text = "Payroll Dashboard";                     // same title as before
-            StartPosition = FormStartPosition.CenterScreen; // same as before
-            MinimumSize = new Size(1120, 700);
-            Size = new Size(1440, 900);
+            FormBorderStyle = FormBorderStyle.None;
+            StartPosition = FormStartPosition.Manual;
+            Bounds = Screen.FromPoint(Cursor.Position).Bounds;
             BackColor = Theme.Bg;
             Font = Theme.Body;
 

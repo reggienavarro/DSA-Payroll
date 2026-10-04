@@ -20,7 +20,10 @@ namespace PAYROLL
         private Label headerTitle = null!;
         private Panel contentHost = null!;
         private Label warningBanner = null!;
-        private SidebarButton navPayroll = null!, navCalendar = null!, navTickets = null!;
+        private SidebarButton navPayroll = null!, navCalendar = null!, navTickets = null!, navPayslips = null!;
+        private DataGridView myPayslipsGrid = null!;
+        private List<Payslip> visiblePayslips = new();
+        private Button openPayslipButton = null!;
 
         public EmployeeDashboardForm(string username, int employeeId)
         {
@@ -28,9 +31,9 @@ namespace PAYROLL
             this.employeeId = employeeId;
 
             Text = "Payroll System - My Payroll";
-            StartPosition = FormStartPosition.CenterScreen;
-            MinimumSize = new Size(1000, 650);
-            Size = new Size(1150, 720);
+            FormBorderStyle = FormBorderStyle.None;
+            StartPosition = FormStartPosition.Manual;
+            Bounds = Screen.FromPoint(Cursor.Position).Bounds;
             BackColor = Theme.Bg;
             Font = Theme.Body;
 
@@ -70,12 +73,15 @@ namespace PAYROLL
                 WrapContents = false, BackColor = Theme.Navy, Padding = new Padding(0, 12, 0, 0)
             };
             navPayroll = new SidebarButton { Text = "My Payroll", Icon = IconKind.Chart, Width = 224, Height = 46, Margin = new Padding(0), Active = true };
+            navPayslips = new SidebarButton { Text = "My Payslips", Icon = IconKind.Card, Width = 224, Height = 46, Margin = new Padding(0) };
             navCalendar = new SidebarButton { Text = "My Calendar", Icon = IconKind.Calendar, Width = 224, Height = 46, Margin = new Padding(0) };
             navTickets = new SidebarButton { Text = "My Tickets", Icon = IconKind.Bell, Width = 224, Height = 46, Margin = new Padding(0) };
             navPayroll.Click += (s, e) => Navigate("payroll");
+            navPayslips.Click += (s, e) => Navigate("payslips");
             navCalendar.Click += (s, e) => Navigate("calendar");
             navTickets.Click += (s, e) => Navigate("tickets");
             nav.Controls.Add(navPayroll);
+            nav.Controls.Add(navPayslips);
             nav.Controls.Add(navCalendar);
             nav.Controls.Add(navTickets);
 
@@ -133,9 +139,11 @@ namespace PAYROLL
         private void Navigate(string view)
         {
             navPayroll.Active = view == "payroll";
+            navPayslips.Active = view == "payslips";
             navCalendar.Active = view == "calendar";
             navTickets.Active = view == "tickets";
             navPayroll.Invalidate();
+            navPayslips.Invalidate();
             navCalendar.Invalidate();
             navTickets.Invalidate();
 
@@ -151,6 +159,11 @@ namespace PAYROLL
             {
                 headerTitle.Text = "My Calendar";
                 ShowCalendar();
+            }
+            else if (view == "payslips")
+            {
+                headerTitle.Text = "My Payslips";
+                ShowPayslips();
             }
             else
             {
@@ -271,6 +284,15 @@ namespace PAYROLL
                 Text = "File a Salary Dispute", Location = new Point(0, deductionsSection.Bottom + 20),
                 Size = new Size(280, 42), SurroundColor = Theme.Bg
             };
+
+            var viewPayslipsBtn = new ModernButton
+            {
+                Text = "View / Print My Payslips",
+                Location = new Point(300, deductionsSection.Bottom + 20),
+                Size = new Size(280, 42),
+                SurroundColor = Theme.Bg
+            };
+            viewPayslipsBtn.Click += (s, e) => Navigate("payslips");
             disputeBtn.Click += (s, e) =>
             {
                 using var form = new TicketForm();
@@ -286,7 +308,100 @@ namespace PAYROLL
             panel.Controls.Add(cardsRow);
             panel.Controls.Add(deductionsSection);
             panel.Controls.Add(disputeBtn);
+            panel.Controls.Add(viewPayslipsBtn);
             contentHost.Controls.Add(panel);
+        }
+
+        private void ShowPayslips()
+        {
+            var panel = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg };
+            var title = new Label
+            {
+                Text = "Payslips from the last 30 days",
+                Font = Theme.H2,
+                ForeColor = Theme.TextDark,
+                Dock = DockStyle.Top,
+                Height = 34,
+                BackColor = Theme.Bg
+            };
+            var hint = new Label
+            {
+                Text = "Select a payslip and open it to print or save it as a PDF.",
+                Font = Theme.Small,
+                ForeColor = Theme.TextGray,
+                Dock = DockStyle.Top,
+                Height = 28,
+                BackColor = Theme.Bg
+            };
+            myPayslipsGrid = new DataGridView { Dock = DockStyle.Fill, ReadOnly = true, AutoGenerateColumns = false };
+            GridStyle.Apply(myPayslipsGrid);
+            myPayslipsGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Cutoff", HeaderText = "Cutoff period", FillWeight = 110 });
+            myPayslipsGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Generated", HeaderText = "Generated", FillWeight = 90 });
+            myPayslipsGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "NetPay", HeaderText = "Net pay", FillWeight = 80 });
+            myPayslipsGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Receivable", HeaderText = "Total receivable", FillWeight = 90 });
+            myPayslipsGrid.CellDoubleClick += (s, e) => OpenSelectedPayslip();
+            myPayslipsGrid.SelectionChanged += (s, e) =>
+            {
+                if (openPayslipButton != null)
+                    openPayslipButton.Enabled = myPayslipsGrid.CurrentRow?.DataBoundItem is DataRowView;
+            };
+
+            var table = new DataTable();
+            table.Columns.Add("PayslipID", typeof(int));
+            table.Columns.Add("Cutoff");
+            table.Columns.Add("Generated");
+            table.Columns.Add("NetPay");
+            table.Columns.Add("Receivable");
+            try
+            {
+                visiblePayslips = PayslipService.LoadRecentForEmployee(employeeId);
+                foreach (var payslip in visiblePayslips)
+                    table.Rows.Add(payslip.PayslipId,
+                        $"{payslip.CutoffStart:MMM d} - {payslip.CutoffEnd:MMM d, yyyy}",
+                        payslip.CreatedAt.ToString("MMM d, yyyy h:mm tt"),
+                        Theme.Money(payslip.NetPay),
+                        Theme.Money(payslip.TotalAmountReceivable));
+                myPayslipsGrid.DataSource = table;
+                if (visiblePayslips.Count == 0)
+                    hint.Text = "No payslips have been generated for your account in the last 30 days. Please contact management if you expected one.";
+            }
+            catch (Exception ex)
+            {
+                warningBanner.Text = "Could not load your payslips: " + ex.Message;
+                warningBanner.Visible = true;
+            }
+
+            var footer = new Panel { Dock = DockStyle.Bottom, Height = 54, BackColor = Theme.Bg, Padding = new Padding(0, 8, 0, 0) };
+            openPayslipButton = new Button
+            {
+                Text = "Open / Print / Save PDF",
+                Size = new Size(220, 38),
+                Enabled = false,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Theme.Accent,
+                ForeColor = Color.White,
+                Font = Theme.SmallBold
+            };
+            openPayslipButton.FlatAppearance.BorderSize = 0;
+            openPayslipButton.Click += (s, e) => OpenSelectedPayslip();
+            openPayslipButton.Enabled = myPayslipsGrid.CurrentRow?.DataBoundItem is DataRowView;
+            footer.Controls.Add(openPayslipButton);
+
+            panel.Controls.Add(myPayslipsGrid);
+            panel.Controls.Add(footer);
+            panel.Controls.Add(hint);
+            panel.Controls.Add(title);
+            contentHost.Controls.Add(panel);
+        }
+
+        private void OpenSelectedPayslip()
+        {
+            if (myPayslipsGrid.CurrentRow?.DataBoundItem is not DataRowView row) return;
+            int id = Convert.ToInt32(row["PayslipID"]);
+            var payslip = visiblePayslips.Find(item => item.PayslipId == id && item.EmployeeId == employeeId);
+            if (payslip == null) return;
+            using var preview = new PayslipPreviewForm(payslip);
+            preview.ShowDialog(this);
         }
 
         private void ShowCalendar()
@@ -555,6 +670,99 @@ namespace PAYROLL
         }
 
         private void ShowTickets()
+        {
+            var panel = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg };
+            var layout = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 3,
+                BackColor = Theme.Bg
+            };
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
+
+            var title = new Label
+            {
+                Text = "My Salary Dispute Tickets",
+                Font = Theme.H2,
+                ForeColor = Theme.TextDark,
+                Dock = DockStyle.Fill,
+                BackColor = Theme.Bg,
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            var grid = new DataGridView { Dock = DockStyle.Fill, ReadOnly = true, AutoGenerateColumns = true };
+            GridStyle.Apply(grid);
+            grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+            grid.CellDoubleClick += (s, e) => { if (e.RowIndex >= 0) OpenSelectedTicket(grid); };
+
+            var footer = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg, Padding = new Padding(0, 8, 0, 0) };
+            var detailsButton = new ModernButton
+            {
+                Text = "View full ticket and response",
+                Size = new Size(270, 38),
+                Location = new Point(0, 8),
+                SurroundColor = Theme.Bg
+            };
+            detailsButton.Click += (s, e) => OpenSelectedTicket(grid);
+            footer.Controls.Add(detailsButton);
+
+            try
+            {
+                var tickets = TicketService.LoadForEmployee(employeeId);
+                var table = new DataTable();
+                table.Columns.Add("TicketID", typeof(int));
+                table.Columns.Add("Subject");
+                table.Columns.Add("Status");
+                table.Columns.Add("Filed On");
+                table.Columns.Add("Management Response");
+                foreach (var ticket in tickets)
+                {
+                    string? adminResponse = ticket.AdminResponse;
+                    string response = string.IsNullOrWhiteSpace(adminResponse)
+                        ? "Awaiting response"
+                        : adminResponse.Replace("\r", " ").Replace("\n", " ");
+                    if (response.Length > 100) response = response[..100] + "...";
+                    table.Rows.Add(ticket.TicketId, ticket.Subject, ticket.Status,
+                        ticket.CreatedAt.ToString("MMM d, yyyy"), response);
+                }
+                grid.DataSource = table;
+                var ticketIdColumn = grid.Columns.Cast<DataGridViewColumn>()
+                    .FirstOrDefault(column => column.DataPropertyName == "TicketID");
+                if (ticketIdColumn != null) ticketIdColumn.Visible = false;
+                var responseColumn = grid.Columns.Cast<DataGridViewColumn>()
+                    .FirstOrDefault(column => column.DataPropertyName == "Management Response");
+                if (responseColumn != null) responseColumn.FillWeight = 150;
+                grid.Tag = tickets;
+                if (tickets.Count == 0)
+                    title.Text = "My Salary Dispute Tickets - no tickets yet";
+            }
+            catch (Exception ex)
+            {
+                warningBanner.Text = "Could not load your tickets: " + ex.Message;
+                warningBanner.Visible = true;
+            }
+
+            layout.Controls.Add(title, 0, 0);
+            layout.Controls.Add(grid, 0, 1);
+            layout.Controls.Add(footer, 0, 2);
+            panel.Controls.Add(layout);
+            contentHost.Controls.Add(panel);
+        }
+
+        private void OpenSelectedTicket(DataGridView grid)
+        {
+            if (grid.CurrentRow?.DataBoundItem is not DataRowView row || grid.Tag is not List<TicketRow> tickets)
+                return;
+            int ticketId = Convert.ToInt32(row["TicketID"]);
+            var ticket = tickets.Find(item => item.TicketId == ticketId && item.EmployeeId == employeeId);
+            if (ticket == null) return;
+            using var details = new TicketDetailForm(ticket);
+            details.ShowDialog(this);
+        }
+
+        private void ShowTicketsLegacy()
         {
             var panel = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg };
             var title = new Label { Text = "My Salary Dispute Tickets", Font = Theme.H2, ForeColor = Theme.TextDark, AutoSize = true, Location = new Point(0, 0), BackColor = Theme.Bg };
