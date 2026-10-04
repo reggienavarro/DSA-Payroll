@@ -23,6 +23,7 @@ namespace PAYROLL
         public string? UndertimeStatus;
         public string UndertimeRemarks = "";
         public string UndertimeReviewedBy = "";
+        public DateTime? UndertimeReviewedAt;
     }
 
     public class AttendanceSummary
@@ -38,6 +39,11 @@ namespace PAYROLL
 
     public static class AttendanceService
     {
+        public static void EnsureAttendanceSchema()
+        {
+            using var con = OpenConnection();
+        }
+
         // The standard break is one hour, and it can only start once the employee
         // has worked one full hour since time-in.
         private const int StandardBreakMinutes = 60;
@@ -143,6 +149,18 @@ namespace PAYROLL
             return Convert.ToInt32(cmd.ExecuteScalar());
         }
 
+        public static List<AttendanceRecord> ListPendingOvertimeApprovals()
+        {
+            using var con = OpenConnection();
+            using var cmd = new MySqlCommand("SELECT " + RecordColumns + @"
+                FROM Attendance a
+                JOIN Employees e ON e.EmployeeID = a.EmployeeID
+                WHERE a.Status = 'Present' AND a.TimeIn IS NOT NULL AND a.TimeOut IS NOT NULL
+                    AND a.OvertimeApproved = 0
+                ORDER BY a.AttendanceDate DESC, e.EmployeeName", con);
+            return ReadRecords(cmd).FindAll(record => GetOvertimeMinutes(record) > 0);
+        }
+
         // Management talked to the employee: record what was said and decided.
         public static void ResolveUndertime(int employeeId, DateTime date, string remarks, string reviewer)
         {
@@ -163,6 +181,8 @@ namespace PAYROLL
             cmd.Parameters.AddWithValue("@Date", date.Date);
             if (cmd.ExecuteNonQuery() == 0)
                 throw new InvalidOperationException("This notice has already been marked as discussed.");
+            EmployeeNotificationService.Add(employeeId, "UndertimeFollowUp", date.Date.ToString("yyyy-MM-dd"),
+                "Undertime follow-up", $"Management recorded a follow-up for {date:MMM d, yyyy}: {remarks.Trim()}");
         }
 
         public static void RecordBreakOut(int employeeId, TimeSpan time)
@@ -225,7 +245,9 @@ namespace PAYROLL
             cmd.Parameters.AddWithValue("@Approved", approved);
             cmd.Parameters.AddWithValue("@EmployeeID", employeeId);
             cmd.Parameters.AddWithValue("@Date", date.Date);
-            cmd.ExecuteNonQuery();
+            if (cmd.ExecuteNonQuery() > 0 && approved)
+                EmployeeNotificationService.Add(employeeId, "OvertimeApproval", date.Date.ToString("yyyy-MM-dd"),
+                    "Overtime approved", $"Your overtime for {date:MMM d, yyyy} has been approved.");
         }
 
         public static void ReportAbsence(int employeeId, DateTime date)
@@ -258,7 +280,7 @@ namespace PAYROLL
         private const string RecordColumns = @"
                 a.EmployeeID, e.EmployeeName, a.AttendanceDate, a.TimeIn,
                 a.BreakOut, a.BreakIn, a.TimeOut, a.OvertimeApproved, a.Status,
-                a.UndertimeStatus, a.UndertimeRemarks, a.UndertimeReviewedBy";
+                a.UndertimeStatus, a.UndertimeRemarks, a.UndertimeReviewedBy, a.UndertimeReviewedAt";
 
         public static List<AttendanceRecord> ListForRange(DateTime start, DateTime end, int? employeeId = null)
         {
@@ -294,6 +316,7 @@ namespace PAYROLL
                     UndertimeStatus = reader["UndertimeStatus"] is DBNull ? null : reader["UndertimeStatus"].ToString(),
                     UndertimeRemarks = reader["UndertimeRemarks"] is DBNull ? "" : reader["UndertimeRemarks"].ToString() ?? "",
                     UndertimeReviewedBy = reader["UndertimeReviewedBy"] is DBNull ? "" : reader["UndertimeReviewedBy"].ToString() ?? "",
+                    UndertimeReviewedAt = reader["UndertimeReviewedAt"] is DBNull ? null : Convert.ToDateTime(reader["UndertimeReviewedAt"]),
                 });
             return records;
         }

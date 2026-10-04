@@ -51,7 +51,7 @@ namespace PAYROLL
         }
 
         // Runs all four and returns each line item plus the grand total —
-        // this is what both Form1 (to fill the Deductions field) and the
+        // this is what both EmployeeManagementForm (to fill the Deductions field) and the
         // employee self-service portal (to show the breakdown) call.
         public static (decimal sss, decimal philHealth, decimal pagIbig, decimal tax, decimal total)
             Compute(decimal basicSalary)

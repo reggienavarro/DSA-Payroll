@@ -36,7 +36,7 @@ namespace PAYROLL
 
             var heading = new Label
             {
-                Text = ticket.Subject,
+                Text = $"{ticket.Subject}  [{ticket.Category}]",
                 Font = Theme.H2,
                 ForeColor = Theme.TextDark,
                 Dock = DockStyle.Fill,
@@ -46,7 +46,7 @@ namespace PAYROLL
             };
             var metadata = new Label
             {
-                Text = $"Filed {ticket.CreatedAt:MMM d, yyyy h:mm tt}   ·   Status: {ticket.Status}",
+                Text = $"Filed {ticket.CreatedAt:MMM d, yyyy h:mm tt}   ·   Urgency: {ticket.Urgency}   ·   Status: {ticket.Status}",
                 Font = Theme.Small,
                 ForeColor = Theme.TextGray,
                 Dock = DockStyle.Fill,

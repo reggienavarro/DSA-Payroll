@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
 using System.Drawing;
+using System.Linq;
 using System.Windows.Forms;
 using PAYROLL.UI;
 
@@ -25,17 +26,24 @@ namespace PAYROLL
         private ProfileChip profileChip = null!;
         private NotificationBell bell = null!;
         private readonly System.Windows.Forms.Timer notificationTimer = new() { Interval = 30000 };
-        private int announcedNotices;   // open undertime notices management has already been told about
+        private (int TicketLow, int TicketMedium, int TicketHigh, int Overtime, int Leave, int Undertime)? announcedNotifications;
         private SidebarButton[] navButtons = Array.Empty<SidebarButton>();
+        private SidebarButton? leaveNavigationButton;
 
-        private readonly Panel contentHost = new Panel();      // dashboard view OR embedded Form1
+        private readonly Panel contentHost = new Panel();      // dashboard view OR embedded EmployeeManagementForm
         private readonly Panel dashboardContent = new Panel(); // cards + charts + employee table
         private Panel? ticketsContent;                         // built lazily on first visit
         private Panel? payslipsContent;                        // built lazily on first visit
         private CompanyPanel? companyContent;                  // built lazily on first visit
-        private DataGridView ticketsGrid = null!;
+        private LeaveRequestsPanel? leaveRequestsContent;
+        private TextBox ticketSearchBox = null!;
+        private ComboBox ticketDepartmentFilter = null!;
+        private FlowLayoutPanel pendingTicketCards = null!, resolvedTicketCards = null!;
+        private Label pendingTicketCount = null!, resolvedTicketCount = null!;
+        private List<TicketRow> allTickets = new();
+        private bool loadingTicketFilters;
         private DataGridView payslipsGrid = null!;
-        private Form? hostedEmployeeForm;                      // Form1, embedded like the old app did
+        private Form? hostedEmployeeForm;                      // EmployeeManagementForm, embedded in the dashboard
         private bool loggingOut;
 
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
@@ -57,7 +65,7 @@ namespace PAYROLL
 
             Load += (s, e) => RefreshData(); // old form loaded stats on startup too
 
-            // Undertime notices: badge on the bell as soon as the dashboard opens, then re-check every 30 s.
+            // Pending management work: update the bell on launch and recheck every 30 seconds.
             Shown += (s, e) => { RefreshNotifications(); notificationTimer.Start(); };
             notificationTimer.Tick += (s, e) => RefreshNotifications();
             FormClosed += (s, e) => notificationTimer.Dispose();
@@ -89,6 +97,7 @@ namespace PAYROLL
                 ("overview", "Overview", IconKind.Grid),
                 ("employee", "Employee", IconKind.Users),
                 ("tickets", "Tickets", IconKind.Bell),
+                ("leave", "Leave Requests", IconKind.Calendar),
                 ("payslips", "Payslips", IconKind.Card),
                 ("company", "Company", IconKind.Bank),
             };
@@ -105,6 +114,7 @@ namespace PAYROLL
                 btn.Click += (s, e) => Navigate(it.key);
                 nav.Controls.Add(btn);
                 navButtons[i] = btn;
+                if (it.key == "leave") leaveNavigationButton = btn;
             }
             navButtons[0].Active = true;
 
@@ -156,7 +166,7 @@ namespace PAYROLL
             };
 
             var addStaff = new ModernButton { Text = "Add New Staff", ShowPlus = true, Size = new Size(162, 38) };
-            addStaff.Click += (s, e) => Navigate("employee"); // Form1 contains the ADD screen; Navigate also moves the sidebar highlight
+            addStaff.Click += (s, e) => Navigate("employee"); // Opens employee creation/management and selects its sidebar item
 
             bell = new NotificationBell { Icon = IconKind.Bell, Size = new Size(40, 40), Margin = new Padding(14, 0, 0, 0) };
             bell.Click += (s, e) => OpenNotifications();
@@ -177,7 +187,7 @@ namespace PAYROLL
                 TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(4, 0, 0, 0)
             };
 
-            // ----- content host: dashboard view OR the embedded Form1 -----
+            // ----- content host: dashboard view OR the embedded employee management screen -----
             contentHost.Dock = DockStyle.Fill;
             contentHost.BackColor = Theme.Bg;
 
@@ -291,6 +301,7 @@ namespace PAYROLL
             else if (key == "employee") ShowEmployee();
             else if (key == "tickets") ShowTickets();
             else if (key == "payslips") ShowPayslips();
+            else if (key == "leave") ShowLeaveRequests();
             else if (key == "company") ShowCompany();
         }
 
@@ -306,21 +317,23 @@ namespace PAYROLL
             if (ticketsContent != null) ticketsContent.Visible = false;
             if (payslipsContent != null) payslipsContent.Visible = false;
             if (companyContent != null) companyContent.Visible = false;
+            if (leaveRequestsContent != null) leaveRequestsContent.Visible = false;
             dashboardContent.Visible = true;
             headerTitle.Text = "Payroll Overview";
             RefreshData();
         }
 
-        // Old btnEmployees_Click: embed Form1 in the content area.
+        // Embed the employee management screen in the dashboard content area.
         private void ShowEmployee()
         {
             if (hostedEmployeeForm != null) return; // already open — keeps typed input
             if (ticketsContent != null) ticketsContent.Visible = false;
             if (payslipsContent != null) payslipsContent.Visible = false;
             if (companyContent != null) companyContent.Visible = false;
+            if (leaveRequestsContent != null) leaveRequestsContent.Visible = false;
             dashboardContent.Visible = false;
             headerTitle.Text = "Employee Management";
-            hostedEmployeeForm = new Form1
+            hostedEmployeeForm = new EmployeeManagementForm
             {
                 TopLevel = false,
                 FormBorderStyle = FormBorderStyle.None,
@@ -345,15 +358,45 @@ namespace PAYROLL
             headerTitle.Text = "Salary Dispute Tickets";
             if (payslipsContent != null) payslipsContent.Visible = false;
             if (companyContent != null) companyContent.Visible = false;
+            if (leaveRequestsContent != null) leaveRequestsContent.Visible = false;
 
             if (ticketsContent == null)
             {
-                ticketsContent = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg, Padding = new Padding(24) };
-                ticketsGrid = new DataGridView { Dock = DockStyle.Fill };
-                GridStyle.Apply(ticketsGrid);
-                ticketsGrid.ReadOnly = true;
-                ticketsGrid.CellDoubleClick += (s, e) => { if (e.RowIndex >= 0) RespondToSelectedTicket(); };
-                ticketsContent.Controls.Add(ticketsGrid);
+                ticketsContent = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg, Padding = new Padding(20, 18, 20, 18) };
+                var filters = new Panel { Dock = DockStyle.Top, Height = 48, BackColor = Theme.Bg };
+                ticketSearchBox = new TextBox
+                {
+                    Location = new Point(0, 7), Width = 300, Height = 30,
+                    PlaceholderText = "Search subject, employee, or ticket..."
+                };
+                ticketDepartmentFilter = new ComboBox
+                {
+                    Location = new Point(316, 6), Width = 230, DropDownStyle = ComboBoxStyle.DropDownList
+                };
+                ticketSearchBox.TextChanged += (s, e) => RefreshTicketBoard();
+                ticketDepartmentFilter.SelectedIndexChanged += (s, e) =>
+                {
+                    if (!loadingTicketFilters) RefreshTicketBoard();
+                };
+                filters.Controls.Add(ticketSearchBox);
+                filters.Controls.Add(ticketDepartmentFilter);
+
+                var board = new TableLayoutPanel
+                {
+                    Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1,
+                    BackColor = Theme.Bg, Padding = new Padding(0, 4, 0, 0)
+                };
+                board.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+                board.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+                var pendingLane = CreateTicketLane("PENDING", out pendingTicketCards, out pendingTicketCount);
+                var resolvedLane = CreateTicketLane("RESOLVED", out resolvedTicketCards, out resolvedTicketCount);
+                pendingLane.Margin = new Padding(0, 0, 8, 0);
+                resolvedLane.Margin = new Padding(8, 0, 0, 0);
+                board.Controls.Add(pendingLane, 0, 0);
+                board.Controls.Add(resolvedLane, 1, 0);
+
+                ticketsContent.Controls.Add(board);
+                ticketsContent.Controls.Add(filters);
                 contentHost.Controls.Add(ticketsContent);
             }
             ticketsContent.Visible = true;
@@ -365,42 +408,190 @@ namespace PAYROLL
         {
             try
             {
-                var tickets = TicketService.LoadAll();
-                var table = new DataTable();
-                table.Columns.Add("TicketID", typeof(int));
-                table.Columns.Add("Employee");
-                table.Columns.Add("Subject");
-                table.Columns.Add("Status");
-                table.Columns.Add("Filed On");
-                foreach (var t in tickets)
-                    table.Rows.Add(t.TicketId, t.EmployeeName, t.Subject, t.Status, t.CreatedAt.ToString("MMM d, yyyy"));
-
-                ticketsGrid.DataSource = table;
-                ticketsGrid.Columns["TicketID"]!.Visible = false; // kept for lookups, not shown
-                ticketsGrid.Tag = tickets; // stash full rows (Message/AdminResponse) for the respond dialog
+                allTickets = TicketService.LoadAll();
+                loadingTicketFilters = true;
+                string selectedDepartment = ticketDepartmentFilter.SelectedItem?.ToString() ?? "All departments";
+                ticketDepartmentFilter.Items.Clear();
+                ticketDepartmentFilter.Items.Add("All departments");
+                foreach (string department in allTickets.Select(ticket => ticket.DepartmentName)
+                    .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(name => name))
+                    ticketDepartmentFilter.Items.Add(department);
+                int selectedIndex = ticketDepartmentFilter.Items.IndexOf(selectedDepartment);
+                ticketDepartmentFilter.SelectedIndex = selectedIndex >= 0 ? selectedIndex : 0;
+                loadingTicketFilters = false;
+                RefreshTicketBoard();
             }
             catch (Exception ex)
             {
+                loadingTicketFilters = false;
                 MessageBox.Show("Could not load tickets: " + ex.Message, "Database Error",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
-        // Double-click a ticket row to open, respond, and mark it resolved.
-        private void RespondToSelectedTicket()
+        private Panel CreateTicketLane(string title, out FlowLayoutPanel cards, out Label count)
         {
-            if (ticketsGrid.CurrentRow == null) return;
-            int ticketId = Convert.ToInt32(ticketsGrid.CurrentRow.Cells["TicketID"].Value);
-            var tickets = ticketsGrid.Tag as List<TicketRow>;
-            var ticket = tickets?.Find(t => t.TicketId == ticketId);
-            if (ticket == null) return;
-
-            using var form = new TicketResponseForm(ticket);
-            if (form.ShowDialog(this) == DialogResult.OK)
+            var lane = new Panel
             {
-                TicketService.Respond(ticketId, form.Response);
-                RefreshTickets();
+                Dock = DockStyle.Fill, BackColor = Color.White,
+                BorderStyle = BorderStyle.FixedSingle, Padding = new Padding(10)
+            };
+            var header = new Panel { Dock = DockStyle.Top, Height = 38, BackColor = Color.White };
+            var titleLabel = new Label
+            {
+                Text = title, Font = Theme.SmallBold, ForeColor = Theme.TextGray,
+                Location = new Point(4, 8), AutoSize = true, BackColor = Color.White
+            };
+            var countLabel = new Label
+            {
+                Text = "0", Font = Theme.SmallBold, ForeColor = Theme.TextGray,
+                AutoSize = true, BackColor = Color.White, Anchor = AnchorStyles.Top | AnchorStyles.Right
+            };
+            header.Controls.Add(titleLabel);
+            header.Controls.Add(countLabel);
+            header.Resize += (s, e) => countLabel.Location = new Point(header.Width - countLabel.Width - 8, 8);
+            count = countLabel;
+            cards = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill, AutoScroll = true, WrapContents = false,
+                FlowDirection = FlowDirection.TopDown, BackColor = Theme.Bg,
+                Padding = new Padding(5)
+            };
+            var cardList = cards;
+            cardList.SizeChanged += (s, e) =>
+            {
+                foreach (Control card in cardList.Controls)
+                    card.Width = Math.Max(250, cardList.ClientSize.Width - 28);
+            };
+            lane.Controls.Add(cardList);
+            lane.Controls.Add(header);
+            return lane;
+        }
+
+        private void RefreshTicketBoard()
+        {
+            if (pendingTicketCards == null || ticketDepartmentFilter == null) return;
+            string query = ticketSearchBox.Text.Trim();
+            string department = ticketDepartmentFilter.SelectedItem?.ToString() ?? "All departments";
+            var filtered = allTickets.Where(ticket =>
+                (department == "All departments" || ticket.DepartmentName.Equals(department, StringComparison.OrdinalIgnoreCase)) &&
+                (query.Length == 0 || ticket.Subject.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                 ticket.Category.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                 ticket.EmployeeName.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                 ticket.Message.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                 ticket.TicketId.ToString().Contains(query, StringComparison.OrdinalIgnoreCase)))
+                .OrderByDescending(ticket => UrgencyRank(ticket.Urgency))
+                .ThenByDescending(ticket => ticket.CreatedAt).ToList();
+            var pending = filtered.Where(ticket => !IsTicketResolved(ticket)).ToList();
+            var resolved = filtered.Where(IsTicketResolved).ToList();
+            AddTicketCards(pendingTicketCards, pending, isResolved: false);
+            AddTicketCards(resolvedTicketCards, resolved, isResolved: true);
+            pendingTicketCount.Text = pending.Count.ToString();
+            resolvedTicketCount.Text = resolved.Count.ToString();
+        }
+
+        private void AddTicketCards(FlowLayoutPanel cards, List<TicketRow> tickets, bool isResolved)
+        {
+            cards.SuspendLayout();
+            cards.Controls.Clear();
+            if (tickets.Count == 0)
+            {
+                cards.Controls.Add(new Label
+                {
+                    Text = isResolved ? "No resolved tickets." : "No pending tickets.",
+                    AutoSize = true, Font = Theme.Small, ForeColor = Theme.TextGray,
+                    Margin = new Padding(8, 12, 8, 8), BackColor = Theme.Bg
+                });
             }
+            foreach (var ticket in tickets)
+                cards.Controls.Add(CreateTicketCard(ticket, isResolved, Math.Max(250, cards.ClientSize.Width - 28)));
+            cards.ResumeLayout();
+        }
+
+        private Control CreateTicketCard(TicketRow ticket, bool isResolved, int width)
+        {
+            var card = new Panel
+            {
+                Width = width, Height = 136, Margin = new Padding(3, 3, 3, 8),
+                BackColor = Color.White, BorderStyle = BorderStyle.FixedSingle, Cursor = Cursors.Hand
+            };
+            Color urgencyBack = ticket.Urgency.Equals("High", StringComparison.OrdinalIgnoreCase) ? Theme.RedBg
+                : ticket.Urgency.Equals("Low", StringComparison.OrdinalIgnoreCase) ? Theme.GreenBg : Theme.AmberBg;
+            Color urgencyFore = ticket.Urgency.Equals("High", StringComparison.OrdinalIgnoreCase) ? Theme.RedText
+                : ticket.Urgency.Equals("Low", StringComparison.OrdinalIgnoreCase) ? Theme.GreenText : Theme.AmberText;
+            var subject = new Label
+            {
+                Text = $"{ticket.Subject}  [{ticket.Category}]", Location = new Point(12, 10),
+                Size = new Size(width - 112, 24), AutoEllipsis = true,
+                Font = Theme.BodyBold, ForeColor = Theme.TextDark, BackColor = Color.White,
+                Cursor = Cursors.Hand
+            };
+            var urgency = new Label
+            {
+                Text = ticket.Urgency.ToUpperInvariant(), Location = new Point(width - 88, 8),
+                Size = new Size(72, 23), TextAlign = ContentAlignment.MiddleCenter,
+                Font = Theme.SmallBold, ForeColor = urgencyFore, BackColor = urgencyBack,
+                Cursor = Cursors.Hand
+            };
+            var employee = new Label
+            {
+                Text = $"{ticket.EmployeeName}  ·  {ticket.DepartmentName}",
+                Location = new Point(12, 39), Size = new Size(width - 26, 21),
+                Font = Theme.SmallBold, ForeColor = Theme.TextGray, AutoEllipsis = true,
+                BackColor = Color.White, Cursor = Cursors.Hand
+            };
+            string message = ticket.Message.Replace("\r", " ").Replace("\n", " ").Trim();
+            if (message.Length > 100) message = message.Substring(0, 97) + "...";
+            var preview = new Label
+            {
+                Text = message, Location = new Point(12, 64), Size = new Size(width - 26, 40),
+                Font = Theme.Small, ForeColor = Theme.TextDark, AutoEllipsis = true,
+                BackColor = Color.White, Cursor = Cursors.Hand
+            };
+            var footer = new Label
+            {
+                Text = $"{ticket.CreatedAt:MMM d, yyyy}   ·   {ticket.Status}",
+                Location = new Point(12, 109), Size = new Size(width - 26, 18),
+                Font = Theme.Small, ForeColor = Theme.TextGray, BackColor = Color.White,
+                Cursor = Cursors.Hand
+            };
+            EventHandler open = (s, e) => OpenTicket(ticket, isResolved);
+            card.Click += open;
+            subject.Click += open;
+            urgency.Click += open;
+            employee.Click += open;
+            preview.Click += open;
+            footer.Click += open;
+            card.Controls.Add(subject);
+            card.Controls.Add(urgency);
+            card.Controls.Add(employee);
+            card.Controls.Add(preview);
+            card.Controls.Add(footer);
+            return card;
+        }
+
+        private static bool IsTicketResolved(TicketRow ticket)
+            => ticket.Status.Equals("Resolved", StringComparison.OrdinalIgnoreCase) ||
+               ticket.Status.Equals("Closed", StringComparison.OrdinalIgnoreCase);
+
+        private static int UrgencyRank(string urgency)
+            => urgency.Equals("High", StringComparison.OrdinalIgnoreCase) ? 3
+             : urgency.Equals("Medium", StringComparison.OrdinalIgnoreCase) ? 2 : 1;
+
+        private void OpenTicket(TicketRow ticket, bool isResolved)
+        {
+            using var form = new TicketResponseForm(ticket, readOnly: isResolved);
+            if (!isResolved && form.ShowDialog(this) == DialogResult.OK)
+            {
+                TicketService.Respond(ticket.TicketId, form.Response);
+                RefreshTickets();
+                RefreshNotifications();
+            }
+            else if (isResolved)
+            {
+                form.ShowDialog(this);
+            }
+
         }
 
         // ------------------------------------------------------------------
@@ -417,6 +608,7 @@ namespace PAYROLL
             dashboardContent.Visible = false;
             if (ticketsContent != null) ticketsContent.Visible = false;
             if (companyContent != null) companyContent.Visible = false;
+            if (leaveRequestsContent != null) leaveRequestsContent.Visible = false;
             headerTitle.Text = "Payslips";
 
             if (payslipsContent == null)
@@ -510,11 +702,12 @@ namespace PAYROLL
             dashboardContent.Visible = false;
             if (ticketsContent != null) ticketsContent.Visible = false;
             if (payslipsContent != null) payslipsContent.Visible = false;
+            if (leaveRequestsContent != null) leaveRequestsContent.Visible = false;
             headerTitle.Text = "Company Settings";
 
             if (companyContent == null)
             {
-                companyContent = new CompanyPanel(CurrentUser) { Dock = DockStyle.Fill };
+                companyContent = new CompanyPanel { Dock = DockStyle.Fill };
                 contentHost.Controls.Add(companyContent);
             }
             companyContent.Visible = true;
@@ -522,37 +715,115 @@ namespace PAYROLL
             companyContent.RefreshAll();
         }
 
+        private void ShowLeaveRequests()
+        {
+            if (hostedEmployeeForm != null)
+            {
+                contentHost.Controls.Remove(hostedEmployeeForm);
+                hostedEmployeeForm.Dispose();
+                hostedEmployeeForm = null;
+            }
+            dashboardContent.Visible = false;
+            if (ticketsContent != null) ticketsContent.Visible = false;
+            if (payslipsContent != null) payslipsContent.Visible = false;
+            if (companyContent != null) companyContent.Visible = false;
+            headerTitle.Text = "Leave Requests";
+            if (leaveRequestsContent == null)
+            {
+                leaveRequestsContent = new LeaveRequestsPanel(CurrentUser, RefreshNotifications) { Dock = DockStyle.Fill };
+                contentHost.Controls.Add(leaveRequestsContent);
+            }
+            leaveRequestsContent.Visible = true;
+            leaveRequestsContent.BringToFront();
+            leaveRequestsContent.RefreshRequests();
+        }
+
         // Old btnLogout_Click, preserved.
         // ------------------------------------------------------------------
-        // NOTIFICATIONS: the bell counts undertime notices that management still
-        // has to follow up on (an employee timed out before completing 8 hours).
+        // NOTIFICATIONS: pending tickets, overtime approvals, leave requests,
+        // and undertime follow-ups are combined in the header bell.
         // ------------------------------------------------------------------
         private void RefreshNotifications()
         {
-            int open;
-            try { open = AttendanceService.CountOpenUndertimeNotices(); }
+            (int TicketLow, int TicketMedium, int TicketHigh, int Overtime, int Leave, int Undertime) current;
+            try
+            {
+                var ticketCounts = TicketService.CountPendingByUrgency();
+                current = (ticketCounts.Low, ticketCounts.Medium, ticketCounts.High,
+                    AttendanceService.ListPendingOvertimeApprovals().Count,
+                    LeaveService.CountPending(),
+                    AttendanceService.CountOpenUndertimeNotices());
+            }
             catch { return; }   // a failed check shouldn't interrupt the dashboard; the next one retries
 
-            bell.Count = open;
+            int ticketTotal = current.TicketLow + current.TicketMedium + current.TicketHigh;
+            int total = ticketTotal + current.Overtime + current.Leave + current.Undertime;
+            bell.Count = total;
             bell.Invalidate();
+            if (leaveNavigationButton != null)
+            {
+                leaveNavigationButton.Text = current.Leave > 0 ? $"Leave Requests ({current.Leave})" : "Leave Requests";
+                leaveNavigationButton.Invalidate();
+            }
 
-            if (open <= announcedNotices) { announcedNotices = open; return; }
+            var previous = announcedNotifications ?? (0, 0, 0, 0, 0, 0);
+            bool hasNewItems = current.TicketLow > previous.Item1 || current.TicketMedium > previous.Item2 ||
+                current.TicketHigh > previous.Item3 || current.Overtime > previous.Item4 ||
+                current.Leave > previous.Item5 || current.Undertime > previous.Item6;
+            if (!hasNewItems) { announcedNotifications = current; return; }
 
-            // New notice(s) since the last check. Pop up, but only while this window is the one
-            // being used, so it never lands on top of a form someone is filling in.
+            // Announce new items only while this dashboard is active, so the prompt
+            // never appears on top of a different screen the user is working in.
             if (ActiveForm != this) return;
-            announcedNotices = open;
+            announcedNotifications = current;
+            var newItems = new List<string>();
+            if (current.TicketLow > previous.Item1 || current.TicketMedium > previous.Item2 || current.TicketHigh > previous.Item3)
+                newItems.Add($"Tickets: {current.TicketHigh} High, {current.TicketMedium} Medium, {current.TicketLow} Low");
+            if (current.Overtime > previous.Item4) newItems.Add($"{current.Overtime} overtime approval(s)");
+            if (current.Leave > previous.Item5) newItems.Add($"{current.Leave} pending leave request(s)");
+            if (current.Undertime > previous.Item6) newItems.Add($"{current.Undertime} undertime follow-up(s)");
             if (MessageBox.Show(this,
-                    $"{open} undertime notice(s) need follow-up.\n\n" +
-                    "An employee timed out before completing their duty. Open the notices now so you can talk to them?",
-                    "Undertime Notice", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
+                    "New management items are waiting:\n\n" + string.Join("\n", newItems) +
+                    "\n\nOpen notifications now?",
+                    "Pending Notifications", MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
                 OpenNotifications();
         }
 
         private void OpenNotifications()
         {
-            using var notices = new UndertimeNoticesForm(CurrentUser);
-            notices.ShowDialog(this);
+            try
+            {
+                var ticketCounts = TicketService.CountPendingByUrgency();
+                var current = (TicketLow: ticketCounts.Low, TicketMedium: ticketCounts.Medium,
+                    TicketHigh: ticketCounts.High, Overtime: AttendanceService.ListPendingOvertimeApprovals().Count,
+                    Leave: LeaveService.CountPending(), Undertime: AttendanceService.CountOpenUndertimeNotices());
+                using var notifications = new ManagementNotificationsForm(
+                    current.TicketLow, current.TicketMedium, current.TicketHigh,
+                    current.Overtime, current.Leave, current.Undertime);
+                if (notifications.ShowDialog(this) == DialogResult.OK)
+                {
+                    switch (notifications.SelectedAction)
+                    {
+                        case "tickets":
+                            Navigate("tickets");
+                            break;
+                        case "overtime":
+                            using (var overtime = new PendingOvertimeForm()) overtime.ShowDialog(this);
+                            break;
+                        case "leave":
+                            Navigate("leave");
+                            break;
+                        case "undertime":
+                            using (var notices = new UndertimeNoticesForm(CurrentUser)) notices.ShowDialog(this);
+                            break;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "Could not load notifications: " + ex.Message,
+                    "Notifications", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
             RefreshNotifications();
         }
 
@@ -613,7 +884,7 @@ namespace PAYROLL
 
         private void FormatGridColumns()
         {
-            employeeGrid.ReadOnly = true; // editing stays inside Form1
+            employeeGrid.ReadOnly = true; // editing stays inside EmployeeManagementForm
             foreach (DataGridViewColumn col in employeeGrid.Columns)
             {
                 string n = col.Name.ToLowerInvariant();

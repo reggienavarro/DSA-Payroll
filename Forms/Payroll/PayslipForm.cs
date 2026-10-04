@@ -182,7 +182,7 @@ namespace PAYROLL
             try
             {
                 using var con = new MySqlConnection(AppConfig.ConnectionString);
-                using var cmd = new MySqlCommand("SELECT EmployeeID, EmployeeName, HourlyRate FROM Employees ORDER BY EmployeeName", con);
+                using var cmd = new MySqlCommand("SELECT EmployeeID, EmployeeName, HourlyRate FROM Employees WHERE IsActive=1 ORDER BY EmployeeName", con);
                 con.Open();
                 using var reader = cmd.ExecuteReader();
                 while (reader.Read())
@@ -390,7 +390,11 @@ namespace PAYROLL
         // ------------------------------------------------------------------
         // LIVE CALCULATIONS
         // ------------------------------------------------------------------
-        private decimal ParseField(string key) => decimal.TryParse(fields[key].Text, out var v) ? v : 0m;
+        private decimal ParseField(string key)
+        {
+            return fields.TryGetValue(key, out var field) && decimal.TryParse(field.Text, out var value)
+                ? value : 0m;
+        }
 
         private void RecomputeBasicPay()
         {
@@ -418,7 +422,7 @@ namespace PAYROLL
             netPayValue.Text = Theme.Money(netPay);
 
             decimal totalBonus = ParseField("attendanceBonus") + ParseField("tenureBonus") + ParseField("oic") +
-                ParseField("account") + ParseField("incentives") + ParseField("internalCommission");
+                ParseField("account") + ParseField("internalCommission");
             totalBonusValue.Text = Theme.Money(totalBonus);
 
             totalReceivableValue.Text = Theme.Money(netPay + totalBonus);

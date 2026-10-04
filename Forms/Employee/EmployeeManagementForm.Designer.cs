@@ -1,6 +1,6 @@
 ﻿namespace PAYROLL
 {
-    partial class Form1
+    partial class EmployeeManagementForm
     {
         /// <summary>
         ///  Required designer variable.
@@ -349,7 +349,7 @@
             dgvPayroll.TabIndex = 23;
             dgvPayroll.CellClick += dgvPayroll_CellClick;
             // 
-            // Form1
+            // EmployeeManagementForm
             // 
             AutoScaleDimensions = new SizeF(7F, 15F);
             AutoScaleMode = AutoScaleMode.Font;
@@ -362,8 +362,8 @@
             Controls.Add(lblTitle);
             Controls.Add(grpEmployeeInfo);
             Controls.Add(dgvPayroll);
-            Name = "Form1";
-            Text = "Form1";
+            Name = "EmployeeManagementForm";
+            Text = "Employee Management";
             grpEmployeeInfo.ResumeLayout(false);
             grpEmployeeInfo.PerformLayout();
             groupBox1.ResumeLayout(false);

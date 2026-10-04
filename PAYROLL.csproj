@@ -9,6 +9,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- This is a documentation template, not a second compiled AppConfig class. -->
+    <Compile Remove="Configuration\AppConfig.example.cs" />
     <PackageReference Include="MaterialSkin.2" Version="2.3.1" />
     <PackageReference Include="Microsoft.Data.SqlClient" Version="7.0.2" />
     <PackageReference Include="MySqlConnector" Version="2.6.2" />

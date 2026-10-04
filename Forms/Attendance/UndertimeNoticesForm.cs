@@ -82,6 +82,13 @@ namespace PAYROLL
             var gridHost = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg, Padding = new Padding(20, 0, 20, 0) };
             GridStyle.Apply(grid);
             grid.SelectionChanged += (s, e) => ShowSelectedRemarks();
+            grid.CellDoubleClick += (s, e) =>
+            {
+                var notice = SelectedNotice();
+                if (e.RowIndex < 0 || notice == null || notice.UndertimeStatus != "Resolved") return;
+                using var receipt = new UndertimeReceiptForm(notice);
+                receipt.ShowDialog(this);
+            };
             gridHost.Controls.Add(grid);
 
             // Fill first, then the edges, so the edges claim their space (same order as the dashboard).

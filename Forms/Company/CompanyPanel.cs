@@ -9,38 +9,36 @@ namespace PAYROLL
 {
     // The "Company" screen: configuration/master data that Payroll and other
     // modules read from. Self-contained so DashboardForm just drops it into
-    // its content area, the same way Form1 gets embedded for "Employee."
+    // its content area, the same way EmployeeManagementForm gets embedded for "Employee."
     public class CompanyPanel : Panel
     {
         private TextBox hourlyRateBox = null!, benefitNameBox = null!, benefitAmountBox = null!;
         private DataGridView benefitsGrid = null!;
-        private DataGridView calendarEventsGrid = null!, calendarDepartmentsGrid = null!;
+        private DataGridView calendarEventsGrid = null!;
+        private FlowLayoutPanel calendarDepartmentCards = null!;
         private MonthCalendar calendarMonth = null!;
         private Label calendarDateLabel = null!, calendarHolidayLabel = null!;
         private int? selectedCalendarDepartmentId;
         private bool loadingCalendar;
         private DataGridView departmentsGrid = null!;
-        private DataGridView leaveRequestsGrid = null!;
         private TextBox departmentName = null!;
-        private readonly string reviewerName;
         private readonly System.Windows.Forms.Timer calendarRefreshTimer = new() { Interval = 30000 };
+        private TabControl companyTabs = null!;
 
-        public CompanyPanel(string reviewerName = "Management")
+        public CompanyPanel()
         {
-            this.reviewerName = reviewerName;
             BackColor = Theme.Bg;
             Padding = new Padding(24);
 
-            var tabs = new TabControl { Dock = DockStyle.Fill };
-            tabs.TabPages.Add(BuildBenefitsTab());
-            tabs.TabPages.Add(BuildCalendarTab());
-            tabs.TabPages.Add(BuildLeaveRequestsTab());
-            tabs.TabPages.Add(BuildDepartmentsTab());
-            Controls.Add(tabs);
+            companyTabs = new TabControl { Dock = DockStyle.Fill };
+            companyTabs.TabPages.Add(BuildBenefitsTab());
+            companyTabs.TabPages.Add(BuildCalendarTab());
+            companyTabs.TabPages.Add(BuildDepartmentsTab());
+            Controls.Add(companyTabs);
 
             calendarRefreshTimer.Tick += (s, e) =>
             {
-                if (Visible && tabs.SelectedTab?.Text == "Calendar") LoadCalendar();
+                if (Visible && companyTabs.SelectedTab?.Text == "Calendar") LoadCalendar();
             };
             calendarRefreshTimer.Start();
         }
@@ -49,7 +47,6 @@ namespace PAYROLL
         {
             LoadBenefits();
             LoadCalendar();
-            LoadLeaveRequests();
             LoadDepartments();
         }
 
@@ -249,11 +246,37 @@ namespace PAYROLL
 
             calendarEventsGrid = new DataGridView { Dock = DockStyle.Fill, ReadOnly = true };
             GridStyle.Apply(calendarEventsGrid);
-            calendarDepartmentsGrid = new DataGridView { Dock = DockStyle.Fill, ReadOnly = true };
-            GridStyle.Apply(calendarDepartmentsGrid);
-            calendarDepartmentsGrid.SelectionChanged += (s, e) =>
+            calendarEventsGrid.CellClick += (s, e) =>
             {
-                if (!loadingCalendar) LoadCalendarDepartmentAttendance();
+                if (e.RowIndex < 0 || e.ColumnIndex < 0 || calendarEventsGrid.Columns[e.ColumnIndex].Name != "Undertime") return;
+                if (calendarEventsGrid.CurrentRow?.Cells["EmployeeID"].Value is not int employeeId ||
+                    calendarEventsGrid.CurrentRow.Cells["AttendanceDate"].Value is not DateTime date) return;
+                try
+                {
+                    var record = AttendanceService.ListForDate(date, employeeId).Find(item => item.EmployeeId == employeeId);
+                    if (record != null && AttendanceService.GetUndertimeMinutes(record) > 0)
+                        using (var receipt = new UndertimeReceiptForm(record)) receipt.ShowDialog(this);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, "Could not open the undertime record: " + ex.Message,
+                        "Company Calendar", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            };
+            calendarEventsGrid.CellFormatting += (s, e) =>
+            {
+                if (e.RowIndex >= 0 && e.ColumnIndex >= 0 && calendarEventsGrid.Columns[e.ColumnIndex].Name == "Undertime" &&
+                    !string.IsNullOrWhiteSpace(e.Value?.ToString()) && e.Value?.ToString() != "â€”")
+                {
+                    e.CellStyle.ForeColor = Theme.Accent;
+                    calendarEventsGrid.Rows[e.RowIndex].Cells[e.ColumnIndex].ToolTipText = "Click to view the undertime follow-up record";
+                }
+            };
+            calendarDepartmentCards = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill, AutoScroll = true, WrapContents = true,
+                FlowDirection = FlowDirection.LeftToRight, BackColor = Color.White,
+                Padding = new Padding(6)
             };
 
             var details = new TableLayoutPanel
@@ -277,7 +300,7 @@ namespace PAYROLL
             };
             var departmentHeading = new Label
             {
-                Text = "DEPARTMENTS  ·  ACTIVE EMPLOYEES", Dock = DockStyle.Fill,
+                Text = "CHOOSE A DEPARTMENT  ·  CHECKED IN ON THIS DATE", Dock = DockStyle.Fill,
                 Font = Theme.SmallBold, ForeColor = Theme.TextGray,
                 TextAlign = ContentAlignment.MiddleLeft, BackColor = Theme.Bg
             };
@@ -300,7 +323,7 @@ namespace PAYROLL
             attendanceToolbar.Controls.Add(approveOvertime);
             details.Controls.Add(calendarHolidayLabel, 0, 0);
             details.Controls.Add(departmentHeading, 0, 1);
-            details.Controls.Add(calendarDepartmentsGrid, 0, 2);
+            details.Controls.Add(calendarDepartmentCards, 0, 2);
             details.Controls.Add(attendanceToolbar, 0, 3);
             details.Controls.Add(calendarEventsGrid, 0, 4);
 
@@ -358,48 +381,86 @@ namespace PAYROLL
         {
             loadingCalendar = true;
             var departments = CompanyService.ListDepartments();
-            var table = new DataTable();
-            table.Columns.Add("DepartmentID", typeof(int));
-            table.Columns.Add("Department");
-            table.Columns.Add("Active Employees", typeof(int));
-            foreach (var department in departments)
-                table.Rows.Add(department.DepartmentId, department.DepartmentName, department.ActiveEmployeeCount);
-            calendarDepartmentsGrid.DataSource = table;
-            if (calendarDepartmentsGrid.Columns["DepartmentID"] is DataGridViewColumn idColumn)
-                idColumn.Visible = false;
-            if (calendarDepartmentsGrid.Columns["Active Employees"] is DataGridViewColumn countColumn)
-            {
-                countColumn.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
-                countColumn.HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleRight;
-                countColumn.AutoSizeMode = DataGridViewAutoSizeColumnMode.AllCells;
-            }
-            if (calendarDepartmentsGrid.Columns["Department"] is DataGridViewColumn nameColumn)
-                nameColumn.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
-
+            var checkInCounts = CompanyService.CountDepartmentCheckIns(calendarMonth.SelectionStart.Date);
             int targetDepartmentId = selectedCalendarDepartmentId ?? departments.FirstOrDefault()?.DepartmentId ?? 0;
             int targetIndex = departments.FindIndex(department => department.DepartmentId == targetDepartmentId);
             if (targetIndex < 0 && departments.Count > 0) targetIndex = 0;
-            if (targetIndex >= 0 && targetIndex < calendarDepartmentsGrid.Rows.Count)
+            selectedCalendarDepartmentId = targetIndex >= 0 ? departments[targetIndex].DepartmentId : null;
+            calendarDepartmentCards.SuspendLayout();
+            calendarDepartmentCards.Controls.Clear();
+            if (departments.Count == 0)
             {
-                calendarDepartmentsGrid.ClearSelection();
-                calendarDepartmentsGrid.Rows[targetIndex].Selected = true;
-                calendarDepartmentsGrid.CurrentCell = calendarDepartmentsGrid.Rows[targetIndex].Cells["Department"];
-                selectedCalendarDepartmentId = departments[targetIndex].DepartmentId;
+                calendarDepartmentCards.Controls.Add(new Label
+                {
+                    Text = "No departments have been added yet.", AutoSize = true,
+                    ForeColor = Theme.TextGray, Font = Theme.Body, Margin = new Padding(8, 10, 8, 8)
+                });
             }
             else
             {
-                selectedCalendarDepartmentId = null;
-                calendarEventsGrid.DataSource = null;
+                foreach (var department in departments)
+                {
+                    int departmentId = department.DepartmentId;
+                    int checkedInCount = checkInCounts.TryGetValue(departmentId, out int count) ? count : 0;
+                    bool selected = selectedCalendarDepartmentId == departmentId;
+                    var card = new Panel
+                    {
+                        Size = new Size(205, 76), Margin = new Padding(4),
+                        BackColor = selected ? Color.FromArgb(239, 246, 255) : Color.White,
+                        BorderStyle = BorderStyle.FixedSingle, Cursor = Cursors.Hand, Tag = departmentId
+                    };
+                    var name = new Label
+                    {
+                        Text = department.DepartmentName, Location = new Point(10, 9),
+                        Size = new Size(181, 25), AutoEllipsis = true,
+                        Font = Theme.BodyBold, ForeColor = selected ? Theme.Accent : Theme.TextDark,
+                        Cursor = Cursors.Hand, BackColor = Color.Transparent
+                    };
+                    var countLabel = new Label
+                    {
+                        Text = $"{checkedInCount} checked in", Location = new Point(10, 39),
+                        Size = new Size(181, 20), Font = Theme.Small,
+                        ForeColor = selected ? Theme.Accent : Theme.TextGray,
+                        Cursor = Cursors.Hand, BackColor = Color.Transparent
+                    };
+                    card.Click += (s, e) => SelectCalendarDepartment(departmentId);
+                    name.Click += (s, e) => SelectCalendarDepartment(departmentId);
+                    countLabel.Click += (s, e) => SelectCalendarDepartment(departmentId);
+                    card.Controls.Add(name);
+                    card.Controls.Add(countLabel);
+                    calendarDepartmentCards.Controls.Add(card);
+                }
             }
+            calendarDepartmentCards.ResumeLayout();
             loadingCalendar = false;
+            if (selectedCalendarDepartmentId.HasValue)
+                LoadCalendarDepartmentAttendance();
+            else
+                calendarEventsGrid.DataSource = null;
+        }
+
+        private void SelectCalendarDepartment(int departmentId)
+        {
+            if (selectedCalendarDepartmentId == departmentId) return;
+            selectedCalendarDepartmentId = departmentId;
+            foreach (Control control in calendarDepartmentCards.Controls)
+            {
+                if (control is not Panel card || card.Tag is not int cardDepartmentId) continue;
+                bool selected = cardDepartmentId == departmentId;
+                card.BackColor = selected ? Color.FromArgb(239, 246, 255) : Color.White;
+                foreach (Control child in card.Controls)
+                {
+                    child.ForeColor = selected ? Theme.Accent
+                        : child is Label label && label.Text.EndsWith("checked in", StringComparison.Ordinal)
+                            ? Theme.TextGray : Theme.TextDark;
+                }
+            }
             LoadCalendarDepartmentAttendance();
         }
 
         private void LoadCalendarDepartmentAttendance()
         {
-            if (loadingCalendar || calendarDepartmentsGrid.CurrentRow?.Cells["DepartmentID"].Value is not int departmentId)
-                return;
-            selectedCalendarDepartmentId = departmentId;
+            if (loadingCalendar || selectedCalendarDepartmentId is not int departmentId) return;
             DateTime selected = calendarMonth.SelectionStart.Date;
             var attendance = CompanyService.ListDepartmentAttendance(departmentId, selected);
             var leaveByEmployee = LeaveService.ListForRange(selected, selected)
@@ -485,89 +546,6 @@ namespace PAYROLL
             catch (Exception ex)
             {
                 MessageBox.Show("Could not approve overtime: " + ex.Message, "Overtime Approval",
-                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            }
-        }
-
-        private TabPage BuildLeaveRequestsTab()
-        {
-            var page = new TabPage("Leave Requests") { BackColor = Theme.Bg, Padding = new Padding(20) };
-            var toolbar = new Panel { Dock = DockStyle.Top, Height = 44, BackColor = Theme.Bg };
-            var approve = new ModernButton
-            {
-                Text = "Approve as Paid", Location = new Point(0, 4), Size = new Size(150, 34),
-                SurroundColor = Theme.Bg
-            };
-            approve.Click += (s, e) => ReviewSelectedLeave(true);
-            var reject = new ModernButton
-            {
-                Text = "Reject", Location = new Point(160, 4), Size = new Size(100, 34),
-                SurroundColor = Theme.Bg, FillColor = Color.FromArgb(229, 231, 235)
-            };
-            reject.ForeColor = Theme.TextDark;
-            reject.Click += (s, e) => ReviewSelectedLeave(false);
-
-            leaveRequestsGrid = new DataGridView
-            {
-                Dock = DockStyle.Fill,
-                ReadOnly = true,
-                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
-                MultiSelect = false
-            };
-            GridStyle.Apply(leaveRequestsGrid);
-            toolbar.Controls.Add(approve);
-            toolbar.Controls.Add(reject);
-            page.Controls.Add(leaveRequestsGrid);
-            page.Controls.Add(toolbar);
-            return page;
-        }
-
-        private void LoadLeaveRequests()
-        {
-            try
-            {
-                var requests = LeaveService.ListForRange(new DateTime(2000, 1, 1), new DateTime(2100, 12, 31));
-                var table = new DataTable();
-                table.Columns.Add("LeaveRequestID", typeof(int));
-                table.Columns.Add("Employee");
-                table.Columns.Add("Start Date");
-                table.Columns.Add("End Date");
-                table.Columns.Add("Reason");
-                table.Columns.Add("Status");
-                table.Columns.Add("Paid", typeof(bool));
-                foreach (var request in requests)
-                    table.Rows.Add(request.LeaveRequestId, request.EmployeeName,
-                        request.StartDate.ToString("MMM d, yyyy"), request.EndDate.ToString("MMM d, yyyy"),
-                        request.Reason, request.Status, request.Paid);
-                leaveRequestsGrid.DataSource = table;
-                leaveRequestsGrid.Columns["LeaveRequestID"]!.Visible = false;
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show("Could not load leave requests: " + ex.Message, "Leave Requests",
-                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            }
-        }
-
-        private void ReviewSelectedLeave(bool approved)
-        {
-            if (leaveRequestsGrid.CurrentRow == null ||
-                leaveRequestsGrid.CurrentRow.Cells["LeaveRequestID"].Value is not int requestId)
-            {
-                MessageBox.Show("Select a leave request first.", "Leave Requests",
-                    MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-
-            try
-            {
-                LeaveService.Review(requestId, approved, reviewerName);
-                LoadLeaveRequests();
-                LoadCalendar();
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show("Could not review leave request: " + ex.Message, "Leave Requests",
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }

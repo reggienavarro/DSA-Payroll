@@ -7,7 +7,7 @@ using PAYROLL.UI;
 
 namespace PAYROLL
 {
-    public partial class Form1 : Form
+    public partial class EmployeeManagementForm : Form
     {
         private readonly string connectionString = AppConfig.ConnectionString;
         private ComboBox departmentCombo = null!;
@@ -17,7 +17,7 @@ namespace PAYROLL
         private DataView employeeView = null!;
         private int? selectedEmployeeId;
 
-        public Form1()
+        public EmployeeManagementForm()
         {
             InitializeComponent();
             CompanyService.EnsureDepartmentSchema();

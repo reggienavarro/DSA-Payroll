@@ -363,3 +363,4 @@ MigrationBackup/
 FodyWeavers.xsd
 # Local database credentials
 Appcofig.cs
+Configuration/AppConfig.local.cs

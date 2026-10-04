@@ -69,19 +69,9 @@ namespace PAYROLL
                 benefitCmd.ExecuteNonQuery();
             }
 
-            // Keep the employee's roster row current: hourly rate for next
-            // time this form opens, and the pay summary fields so the
-            // Overview dashboard (which reads Employees, not Payslips)
-            // reflects this payslip without needing any changes itself.
-            using var updateEmployee = new MySqlCommand(@"
-                UPDATE Employees SET
-                    HourlyRate = @Rate,
-                    BasicSalary = @BasicPay,
-                    GrossPay = @Total,
-                    OvertimePay = @TotalOtPay,
-                    Deductions = @TotalDeductions,
-                    NetPay = @NetPay
-                WHERE EmployeeID = @EmployeeID", con, transaction);
+            using var updateEmployee = new MySqlCommand(@"UPDATE Employees SET
+                HourlyRate=@Rate, BasicSalary=@BasicPay, GrossPay=@Total, OvertimePay=@TotalOtPay,
+                Deductions=@TotalDeductions, NetPay=@NetPay WHERE EmployeeID=@EmployeeID", con, transaction);
             updateEmployee.Parameters.AddWithValue("@Rate", p.HourlyRate);
             updateEmployee.Parameters.AddWithValue("@BasicPay", p.BasicPay);
             updateEmployee.Parameters.AddWithValue("@Total", p.Total);
@@ -90,6 +80,7 @@ namespace PAYROLL
             updateEmployee.Parameters.AddWithValue("@NetPay", p.NetPay);
             updateEmployee.Parameters.AddWithValue("@EmployeeID", p.EmployeeId);
             updateEmployee.ExecuteNonQuery();
+
             transaction.Commit();
         }
 

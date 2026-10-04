@@ -337,13 +337,14 @@ namespace PAYROLL
         public static List<AttendanceRecord> ListDepartmentAttendance(int departmentId, DateTime date)
         {
             EnsureDepartmentSchema();
+            AttendanceService.EnsureAttendanceSchema();
             var list = new List<AttendanceRecord>();
             using var con = new MySqlConnection(AppConfig.ConnectionString);
             using var cmd = new MySqlCommand(@"
                 SELECT e.EmployeeID, e.EmployeeName, a.AttendanceDate, a.TimeIn,
                     a.BreakOut, a.BreakIn, a.TimeOut, COALESCE(a.OvertimeApproved, 0) AS OvertimeApproved,
                     COALESCE(a.Status, 'Not recorded') AS Status,
-                    a.UndertimeStatus, a.UndertimeRemarks, a.UndertimeReviewedBy
+                    a.UndertimeStatus, a.UndertimeRemarks, a.UndertimeReviewedBy, a.UndertimeReviewedAt
                 FROM Employees e
                 LEFT JOIN Attendance a
                     ON a.EmployeeID = e.EmployeeID AND a.AttendanceDate = @Date
@@ -372,8 +373,32 @@ namespace PAYROLL
                         ? "" : reader["UndertimeRemarks"].ToString() ?? "",
                     UndertimeReviewedBy = reader["UndertimeReviewedBy"] is DBNull
                         ? "" : reader["UndertimeReviewedBy"].ToString() ?? "",
+                    UndertimeReviewedAt = reader["UndertimeReviewedAt"] is DBNull
+                        ? null : Convert.ToDateTime(reader["UndertimeReviewedAt"]),
                 });
             return list;
+        }
+
+        public static Dictionary<int, int> CountDepartmentCheckIns(DateTime date)
+        {
+            EnsureDepartmentSchema();
+            var counts = new Dictionary<int, int>();
+            using var con = new MySqlConnection(AppConfig.ConnectionString);
+            using var cmd = new MySqlCommand(@"
+                SELECT e.DepartmentID, COUNT(DISTINCT e.EmployeeID) AS CheckedInCount
+                FROM Employees e
+                JOIN Attendance a ON a.EmployeeID = e.EmployeeID
+                    AND a.AttendanceDate = @Date
+                    AND a.Status = 'Present'
+                    AND a.TimeIn IS NOT NULL
+                WHERE e.IsActive = 1 AND e.DepartmentID IS NOT NULL
+                GROUP BY e.DepartmentID", con);
+            cmd.Parameters.AddWithValue("@Date", date.Date);
+            con.Open();
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+                counts[Convert.ToInt32(reader["DepartmentID"])] = Convert.ToInt32(reader["CheckedInCount"]);
+            return counts;
         }
 
         private static TimeSpan? ReadAttendanceTime(object value) => value switch

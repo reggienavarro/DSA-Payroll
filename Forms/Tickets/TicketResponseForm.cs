@@ -11,9 +11,9 @@ namespace PAYROLL
         private TextBox txtResponse = null!;
         public string Response => txtResponse.Text.Trim();
 
-        public TicketResponseForm(TicketRow ticket)
+        public TicketResponseForm(TicketRow ticket, bool readOnly = false)
         {
-            Text = "Respond to Ticket";
+            Text = readOnly ? "Ticket Details" : "Respond to Ticket";
             StartPosition = FormStartPosition.CenterParent;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
@@ -34,10 +34,12 @@ namespace PAYROLL
             };
             var meta = new Label
             {
-                Text = $"From {ticket.EmployeeName}  ·  {ticket.CreatedAt:MMM d, yyyy}  ·  {ticket.Status}",
+                Text = $"From {ticket.EmployeeName}  ·  {ticket.DepartmentName}  ·  {ticket.CreatedAt:MMM d, yyyy}  ·  {ticket.Urgency} urgency  ·  {ticket.Status}",
                 Font = Theme.Small,
                 ForeColor = Theme.TextGray,
-                AutoSize = true,
+                AutoSize = false,
+                Size = new Size(400, 22),
+                AutoEllipsis = true,
                 Location = new Point(24, 58),
                 BackColor = Color.White
             };
@@ -66,7 +68,7 @@ namespace PAYROLL
 
             var responseLabel = new Label
             {
-                Text = "YOUR RESPONSE",
+                Text = readOnly ? "MANAGEMENT RESPONSE" : "YOUR RESPONSE",
                 Font = Theme.SmallBold,
                 ForeColor = Theme.TextGray,
                 AutoSize = true,
@@ -83,17 +85,24 @@ namespace PAYROLL
                 Multiline = true, BorderStyle = BorderStyle.None, Font = Theme.Body,
                 Location = new Point(12, 10), Size = new Size(376, 90),
                 ScrollBars = ScrollBars.Vertical,
-                Text = ticket.AdminResponse ?? ""
+                Text = ticket.AdminResponse ?? "",
+                ReadOnly = readOnly
             };
             responsePanel.Controls.Add(txtResponse);
 
             var btnSubmit = new ModernButton
             {
-                Text = "Send Response & Resolve", Location = new Point(24, 370),
+                Text = readOnly ? "Close" : "Send Response & Resolve", Location = new Point(24, 370),
                 Size = new Size(400, 42), SurroundColor = Color.White
             };
             btnSubmit.Click += (s, e) =>
             {
+                if (readOnly)
+                {
+                    DialogResult = DialogResult.Cancel;
+                    Close();
+                    return;
+                }
                 if (txtResponse.Text.Trim().Length == 0)
                 {
                     MessageBox.Show("Write a response before resolving this ticket.", "Missing Response",

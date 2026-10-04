@@ -19,6 +19,13 @@ namespace PAYROLL
 
     public static class LeaveService
     {
+        public static int CountPending()
+        {
+            using var con = OpenConnection();
+            using var cmd = new MySqlCommand("SELECT COUNT(*) FROM LeaveRequests WHERE Status = 'Pending'", con);
+            return Convert.ToInt32(cmd.ExecuteScalar());
+        }
+
         public static void CreateRequest(int employeeId, DateTime startDate, DateTime endDate, string reason)
         {
             if (startDate.Date < DateTime.Today)
@@ -85,6 +92,18 @@ namespace PAYROLL
         public static void Review(int requestId, bool approved, string reviewer)
         {
             using var con = OpenConnection();
+            int employeeId;
+            DateTime startDate;
+            DateTime endDate;
+            using (var owner = new MySqlCommand("SELECT EmployeeID, StartDate, EndDate FROM LeaveRequests WHERE LeaveRequestID=@RequestID", con))
+            {
+                owner.Parameters.AddWithValue("@RequestID", requestId);
+                using var reader = owner.ExecuteReader();
+                if (!reader.Read()) throw new InvalidOperationException("This leave request was not found.");
+                employeeId = Convert.ToInt32(reader["EmployeeID"]);
+                startDate = Convert.ToDateTime(reader["StartDate"]);
+                endDate = Convert.ToDateTime(reader["EndDate"]);
+            }
             using var cmd = new MySqlCommand(@"
                 UPDATE LeaveRequests SET
                     Status = @Status, Paid = @Paid, ReviewedBy = @Reviewer, ReviewedAt = NOW()
@@ -95,6 +114,10 @@ namespace PAYROLL
             cmd.Parameters.AddWithValue("@RequestID", requestId);
             if (cmd.ExecuteNonQuery() == 0)
                 throw new InvalidOperationException("This leave request is no longer pending.");
+            string decision = approved ? "approved" : "rejected";
+            EmployeeNotificationService.Add(con, employeeId, "LeaveDecision", requestId.ToString(),
+                "Leave request " + (approved ? "approved" : "not approved"),
+                $"Your leave request for {startDate:MMM d, yyyy} to {endDate:MMM d, yyyy} was {decision}.");
         }
 
         public static decimal GetPaidWorkdays(int employeeId, DateTime start, DateTime end)

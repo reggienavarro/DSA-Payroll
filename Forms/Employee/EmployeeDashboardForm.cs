@@ -20,10 +20,12 @@ namespace PAYROLL
         private Label headerTitle = null!;
         private Panel contentHost = null!;
         private Label warningBanner = null!;
-        private SidebarButton navPayroll = null!, navCalendar = null!, navTickets = null!, navPayslips = null!;
+        private SidebarButton navPayroll = null!, navCalendar = null!, navTickets = null!, navPayslips = null!, navLeave = null!;
         private DataGridView myPayslipsGrid = null!;
         private List<Payslip> visiblePayslips = new();
         private Button openPayslipButton = null!;
+        private readonly System.Windows.Forms.Timer notificationTimer;
+        private Button notificationButton = null!;
 
         public EmployeeDashboardForm(string username, int employeeId)
         {
@@ -43,6 +45,10 @@ namespace PAYROLL
             Controls.Add(BuildSidebar()); // ...then left → sidebar takes the real left edge
 
             Navigate("payroll");
+            notificationTimer = new System.Windows.Forms.Timer { Interval = 30000 };
+            notificationTimer.Tick += (s, e) => RefreshNotificationBadge();
+            Shown += (s, e) => { RefreshNotificationBadge(); notificationTimer.Start(); };
+            FormClosed += (s, e) => notificationTimer.Dispose();
         }
 
         // ------------------------------------------------------------------
@@ -75,14 +81,17 @@ namespace PAYROLL
             navPayroll = new SidebarButton { Text = "My Payroll", Icon = IconKind.Chart, Width = 224, Height = 46, Margin = new Padding(0), Active = true };
             navPayslips = new SidebarButton { Text = "My Payslips", Icon = IconKind.Card, Width = 224, Height = 46, Margin = new Padding(0) };
             navCalendar = new SidebarButton { Text = "My Calendar", Icon = IconKind.Calendar, Width = 224, Height = 46, Margin = new Padding(0) };
+            navLeave = new SidebarButton { Text = "My Leave", Icon = IconKind.Calendar, Width = 224, Height = 46, Margin = new Padding(0) };
             navTickets = new SidebarButton { Text = "My Tickets", Icon = IconKind.Bell, Width = 224, Height = 46, Margin = new Padding(0) };
             navPayroll.Click += (s, e) => Navigate("payroll");
             navPayslips.Click += (s, e) => Navigate("payslips");
             navCalendar.Click += (s, e) => Navigate("calendar");
+            navLeave.Click += (s, e) => Navigate("leave");
             navTickets.Click += (s, e) => Navigate("tickets");
             nav.Controls.Add(navPayroll);
             nav.Controls.Add(navPayslips);
             nav.Controls.Add(navCalendar);
+            nav.Controls.Add(navLeave);
             nav.Controls.Add(navTickets);
 
             var logoutBar = new Panel { Dock = DockStyle.Bottom, Height = 60, BackColor = Theme.Navy };
@@ -118,9 +127,24 @@ namespace PAYROLL
                 Text = "Signed in as " + username, Font = Theme.Small, ForeColor = Theme.TextGray,
                 AutoSize = true, BackColor = Color.White
             };
-            header.Resize += (s, e) => welcome.Location = new Point(header.Width - welcome.Width - 24, 24);
+            notificationButton = new Button
+            {
+                Text = "Notifications", Size = new Size(112, 34), FlatStyle = FlatStyle.Flat,
+                BackColor = Color.White, ForeColor = Theme.TextDark, Font = Theme.SmallBold,
+                Anchor = AnchorStyles.Top | AnchorStyles.Right
+            };
+            notificationButton.FlatAppearance.BorderColor = Theme.CardBorder;
+            notificationButton.Click += (s, e) => OpenNotifications();
+            header.Resize += (s, e) =>
+            {
+                welcome.Location = new Point(header.Width - welcome.Width - 24, 24);
+                notificationButton.Location = new Point(welcome.Left - notificationButton.Width - 16, 15);
+            };
+            header.Controls.Add(notificationButton);
             header.Controls.Add(headerTitle);
             header.Controls.Add(welcome);
+            welcome.Location = new Point(header.Width - welcome.Width - 24, 24);
+            notificationButton.Location = new Point(welcome.Left - notificationButton.Width - 16, 15);
 
             warningBanner = new Label
             {
@@ -141,10 +165,12 @@ namespace PAYROLL
             navPayroll.Active = view == "payroll";
             navPayslips.Active = view == "payslips";
             navCalendar.Active = view == "calendar";
+            navLeave.Active = view == "leave";
             navTickets.Active = view == "tickets";
             navPayroll.Invalidate();
             navPayslips.Invalidate();
             navCalendar.Invalidate();
+            navLeave.Invalidate();
             navTickets.Invalidate();
 
             contentHost.Controls.Clear();
@@ -164,6 +190,11 @@ namespace PAYROLL
             {
                 headerTitle.Text = "My Payslips";
                 ShowPayslips();
+            }
+            else if (view == "leave")
+            {
+                headerTitle.Text = "My Leave";
+                ShowMyLeave();
             }
             else
             {
@@ -281,7 +312,7 @@ namespace PAYROLL
 
             var disputeBtn = new ModernButton
             {
-                Text = "File a Salary Dispute", Location = new Point(0, deductionsSection.Bottom + 20),
+                Text = "Create a Ticket", Location = new Point(0, deductionsSection.Bottom + 20),
                 Size = new Size(280, 42), SurroundColor = Theme.Bg
             };
 
@@ -298,8 +329,8 @@ namespace PAYROLL
                 using var form = new TicketForm();
                 if (form.ShowDialog(this) == DialogResult.OK)
                 {
-                    TicketService.Create(employeeId, form.Subject, form.Message);
-                    MessageBox.Show("Your dispute has been submitted. Management will respond in My Tickets.",
+                    TicketService.Create(employeeId, form.Subject, form.Message, form.Urgency, form.Category);
+                    MessageBox.Show("Your ticket has been submitted. Management will respond in My Tickets.",
                         "Ticket Submitted", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
             };
@@ -404,6 +435,60 @@ namespace PAYROLL
             preview.ShowDialog(this);
         }
 
+        private void ShowMyLeave()
+        {
+            var panel = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg };
+            var header = new Panel { Dock = DockStyle.Top, Height = 78, BackColor = Theme.Bg };
+            var title = new Label { Text = "My Leave Requests", Font = Theme.H2, ForeColor = Theme.TextDark,
+                AutoSize = true, Location = new Point(0, 0), BackColor = Theme.Bg };
+            var subtitle = new Label { Text = "Submit a request and follow its review status here.", Font = Theme.Small,
+                ForeColor = Theme.TextGray, AutoSize = true, Location = new Point(0, 36), BackColor = Theme.Bg };
+            var requestButton = new ModernButton { Text = "Request Leave", Size = new Size(160, 38),
+                Anchor = AnchorStyles.Top | AnchorStyles.Right, Location = new Point(0, 4), SurroundColor = Theme.Bg };
+            header.Resize += (s, e) => requestButton.Left = header.ClientSize.Width - requestButton.Width;
+            requestButton.Click += (s, e) =>
+            {
+                using var form = new LeaveRequestForm(employeeId);
+                if (form.ShowDialog(this) == DialogResult.OK) ShowMyLeave();
+            };
+            header.Controls.Add(title);
+            header.Controls.Add(subtitle);
+            header.Controls.Add(requestButton);
+
+            var grid = new DataGridView { Dock = DockStyle.Fill, ReadOnly = true,
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false };
+            GridStyle.Apply(grid);
+            try
+            {
+                var requests = LeaveService.ListForRange(new DateTime(2000, 1, 1), new DateTime(2100, 12, 31), employeeId)
+                    .OrderByDescending(request => request.StartDate).ToList();
+                var table = new DataTable();
+                table.Columns.Add("RequestID", typeof(int));
+                table.Columns.Add("Start Date");
+                table.Columns.Add("End Date");
+                table.Columns.Add("Reason");
+                table.Columns.Add("Status");
+                table.Columns.Add("Paid", typeof(bool));
+                foreach (var request in requests)
+                    table.Rows.Add(request.LeaveRequestId, request.StartDate.ToString("MMM d, yyyy"),
+                        request.EndDate.ToString("MMM d, yyyy"), request.Reason, request.Status, request.Paid);
+                grid.DataSource = table;
+                if (grid.Columns["RequestID"] is DataGridViewColumn idColumn) idColumn.Visible = false;
+                if (grid.Columns["Reason"] is DataGridViewColumn reasonColumn)
+                    reasonColumn.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+                if (requests.Count == 0) subtitle.Text = "You have no leave requests yet. Use Request Leave to submit one.";
+            }
+            catch (Exception ex)
+            {
+                warningBanner.Text = "Could not load your leave requests: " + ex.Message;
+                warningBanner.Visible = true;
+            }
+
+            panel.Controls.Add(grid);
+            panel.Controls.Add(header);
+            contentHost.Controls.Add(panel);
+        }
+
         private void ShowCalendar()
         {
             var panel = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg };
@@ -475,10 +560,6 @@ namespace PAYROLL
             {
                 Text = "Report Absence", Location = new Point(250, 150), Size = new Size(160, 36), SurroundColor = Theme.Bg
             };
-            var applyLeave = new ModernButton
-            {
-                Text = "Apply for Leave", Location = new Point(430, 150), Size = new Size(160, 36), SurroundColor = Theme.Bg
-            };
             var recordsGrid = new DataGridView
             {
                 Location = new Point(0, 210), Size = new Size(850, 360),
@@ -487,6 +568,34 @@ namespace PAYROLL
             };
             panel.Resize += (s, e) => recordsGrid.Size = new Size(panel.ClientSize.Width, Math.Max(120, panel.ClientSize.Height - 220));
             GridStyle.Apply(recordsGrid);
+            recordsGrid.CellClick += (s, e) =>
+            {
+                if (e.RowIndex < 0 || e.ColumnIndex < 0 || recordsGrid.Columns[e.ColumnIndex].Name != "Undertime") return;
+                if (recordsGrid.Rows[e.RowIndex].Cells["Type"].Value?.ToString() != "Attendance") return;
+                string text = recordsGrid.Rows[e.RowIndex].Cells["Undertime"].Value?.ToString() ?? "";
+                if (string.IsNullOrWhiteSpace(text)) return;
+                try
+                {
+                    DateTime date = DateTime.Parse(recordsGrid.Rows[e.RowIndex].Cells["Date"].Value?.ToString() ?? "");
+                    var record = AttendanceService.ListForDate(date, employeeId).Find(item => item.EmployeeId == employeeId);
+                    if (record != null)
+                        using (var receipt = new UndertimeReceiptForm(record)) receipt.ShowDialog(this);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Could not open the undertime record: " + ex.Message, "Attendance",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            };
+            recordsGrid.CellFormatting += (s, e) =>
+            {
+                if (e.RowIndex >= 0 && e.ColumnIndex >= 0 && recordsGrid.Columns[e.ColumnIndex].Name == "Undertime" &&
+                    !string.IsNullOrWhiteSpace(e.Value?.ToString()))
+                {
+                    e.CellStyle.ForeColor = Theme.Accent;
+                    recordsGrid.Rows[e.RowIndex].Cells[e.ColumnIndex].ToolTipText = "Click to view the undertime follow-up record";
+                }
+            };
 
             void RefreshCalendar()
             {
@@ -629,12 +738,6 @@ namespace PAYROLL
                 }
                 catch (Exception ex) { MessageBox.Show(ex.Message, "Attendance", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
             };
-            applyLeave.Click += (s, e) =>
-            {
-                using var form = new LeaveRequestForm(employeeId);
-                if (form.ShowDialog(this) == DialogResult.OK) RefreshCalendar();
-            };
-
             panel.Controls.Add(calendar);
             panel.Controls.Add(timeInLabel);
             panel.Controls.Add(timeInValue);
@@ -649,7 +752,6 @@ namespace PAYROLL
             panel.Controls.Add(timeOutValue);
             panel.Controls.Add(timeOut);
             panel.Controls.Add(reportAbsence);
-            panel.Controls.Add(applyLeave);
             panel.Controls.Add(recordsGrid);
             contentHost.Controls.Add(panel);
             RefreshCalendar();
@@ -685,7 +787,7 @@ namespace PAYROLL
 
             var title = new Label
             {
-                Text = "My Salary Dispute Tickets",
+                Text = "My Tickets",
                 Font = Theme.H2,
                 ForeColor = Theme.TextDark,
                 Dock = DockStyle.Fill,
@@ -714,6 +816,8 @@ namespace PAYROLL
                 var table = new DataTable();
                 table.Columns.Add("TicketID", typeof(int));
                 table.Columns.Add("Subject");
+                table.Columns.Add("Category");
+                table.Columns.Add("Urgency");
                 table.Columns.Add("Status");
                 table.Columns.Add("Filed On");
                 table.Columns.Add("Management Response");
@@ -724,7 +828,7 @@ namespace PAYROLL
                         ? "Awaiting response"
                         : adminResponse.Replace("\r", " ").Replace("\n", " ");
                     if (response.Length > 100) response = response[..100] + "...";
-                    table.Rows.Add(ticket.TicketId, ticket.Subject, ticket.Status,
+                    table.Rows.Add(ticket.TicketId, ticket.Subject, ticket.Category, ticket.Urgency, ticket.Status,
                         ticket.CreatedAt.ToString("MMM d, yyyy"), response);
                 }
                 grid.DataSource = table;
@@ -736,7 +840,7 @@ namespace PAYROLL
                 if (responseColumn != null) responseColumn.FillWeight = 150;
                 grid.Tag = tickets;
                 if (tickets.Count == 0)
-                    title.Text = "My Salary Dispute Tickets - no tickets yet";
+                    title.Text = "My Tickets - no tickets yet";
             }
             catch (Exception ex)
             {
@@ -749,6 +853,33 @@ namespace PAYROLL
             layout.Controls.Add(footer, 0, 2);
             panel.Controls.Add(layout);
             contentHost.Controls.Add(panel);
+        }
+
+        private void RefreshNotificationBadge()
+        {
+            try
+            {
+                int unread = EmployeeNotificationService.CountUnread(employeeId);
+                notificationButton.Text = unread > 0 ? $"Notifications ({unread})" : "Notifications";
+            }
+            catch { notificationButton.Text = "Notifications"; }
+        }
+
+        private void OpenNotifications()
+        {
+            try
+            {
+                var notices = EmployeeNotificationService.List(employeeId);
+                using var form = new EmployeeNotificationsForm(notices);
+                form.ShowDialog(this);
+                EmployeeNotificationService.MarkAllRead(employeeId);
+                RefreshNotificationBadge();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Could not load notifications: " + ex.Message, "Notifications",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
         }
 
         private void OpenSelectedTicket(DataGridView grid)
