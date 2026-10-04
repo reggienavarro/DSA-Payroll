@@ -25,10 +25,119 @@ namespace PAYROLL
     {
         public int DepartmentId;
         public string DepartmentName = "";
+        public int ActiveEmployeeCount;
+    }
+
+    public class CompanyBenefit
+    {
+        public int BenefitId;
+        public string BenefitName = "";
+        public decimal DefaultAmount;
     }
 
     public static class CompanyService
     {
+        public static void EnsureBenefitsSchema()
+        {
+            using var con = new MySqlConnection(AppConfig.ConnectionString);
+            con.Open();
+            using var exists = new MySqlCommand(@"
+                SELECT COUNT(*) FROM information_schema.TABLES
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'CompanyBenefits'", con);
+            bool tableExisted = Convert.ToInt32(exists.ExecuteScalar()) > 0;
+            using (var benefits = new MySqlCommand(@"
+                CREATE TABLE IF NOT EXISTS CompanyBenefits (
+                    BenefitID INT AUTO_INCREMENT PRIMARY KEY,
+                    BenefitName VARCHAR(120) NOT NULL UNIQUE,
+                    DefaultAmount DECIMAL(12,2) NOT NULL DEFAULT 0
+                )", con))
+                benefits.ExecuteNonQuery();
+            using (var items = new MySqlCommand(@"
+                CREATE TABLE IF NOT EXISTS PayslipBenefitItems (
+                    BenefitItemID INT AUTO_INCREMENT PRIMARY KEY,
+                    PayslipID INT NOT NULL,
+                    BenefitName VARCHAR(120) NOT NULL,
+                    Amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    INDEX IX_PayslipBenefitItems_PayslipID (PayslipID)
+                )", con))
+                items.ExecuteNonQuery();
+
+            if (!tableExisted)
+                SeedBenefitsFromLegacyDefaults(con);
+        }
+
+        private static void SeedBenefitsFromLegacyDefaults(MySqlConnection con)
+        {
+            var values = new List<(string Name, decimal Amount)>();
+            try
+            {
+                using var read = new MySqlCommand(@"
+                    SELECT RiceAllowance, DailyMeal, Uniform, Laundry, Incentives
+                    FROM PayrollDefaults WHERE ConfigID = 1", con);
+                using var reader = read.ExecuteReader();
+                if (reader.Read())
+                {
+                    values.Add(("Rice Allowance", Convert.ToDecimal(reader["RiceAllowance"])));
+                    values.Add(("Daily Meal", Convert.ToDecimal(reader["DailyMeal"])));
+                    values.Add(("Uniform", Convert.ToDecimal(reader["Uniform"])));
+                    values.Add(("Laundry", Convert.ToDecimal(reader["Laundry"])));
+                    values.Add(("Incentives", Convert.ToDecimal(reader["Incentives"])));
+                }
+            }
+            catch (MySqlException ex) when (ex.Number == 1146) { return; }
+
+            foreach (var value in values)
+            {
+                if (value.Amount <= 0) continue;
+                using var insert = new MySqlCommand(
+                    "INSERT IGNORE INTO CompanyBenefits (BenefitName, DefaultAmount) VALUES (@Name, @Amount)", con);
+                insert.Parameters.AddWithValue("@Name", value.Name);
+                insert.Parameters.AddWithValue("@Amount", value.Amount);
+                insert.ExecuteNonQuery();
+            }
+        }
+
+        public static List<CompanyBenefit> ListBenefits()
+        {
+            EnsureBenefitsSchema();
+            var list = new List<CompanyBenefit>();
+            using var con = new MySqlConnection(AppConfig.ConnectionString);
+            using var cmd = new MySqlCommand(
+                "SELECT BenefitID, BenefitName, DefaultAmount FROM CompanyBenefits ORDER BY BenefitName", con);
+            con.Open();
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+                list.Add(new CompanyBenefit
+                {
+                    BenefitId = Convert.ToInt32(reader["BenefitID"]),
+                    BenefitName = reader["BenefitName"].ToString() ?? "",
+                    DefaultAmount = Convert.ToDecimal(reader["DefaultAmount"])
+                });
+            return list;
+        }
+
+        public static void AddBenefit(string name, decimal amount)
+        {
+            EnsureBenefitsSchema();
+            using var con = new MySqlConnection(AppConfig.ConnectionString);
+            using var cmd = new MySqlCommand(
+                "INSERT INTO CompanyBenefits (BenefitName, DefaultAmount) VALUES (@Name, @Amount)", con);
+            cmd.Parameters.AddWithValue("@Name", name);
+            cmd.Parameters.AddWithValue("@Amount", amount);
+            con.Open();
+            cmd.ExecuteNonQuery();
+        }
+
+        public static void DeleteBenefit(int benefitId)
+        {
+            EnsureBenefitsSchema();
+            using var con = new MySqlConnection(AppConfig.ConnectionString);
+            using var cmd = new MySqlCommand("DELETE FROM CompanyBenefits WHERE BenefitID=@ID", con);
+            cmd.Parameters.AddWithValue("@ID", benefitId);
+            con.Open();
+            cmd.ExecuteNonQuery();
+        }
+
         public static void EnsureDepartmentSchema()
         {
             using var con = new MySqlConnection(AppConfig.ConnectionString);
@@ -205,8 +314,14 @@ namespace PAYROLL
         public static List<Department> ListDepartments()
         {
             var list = new List<Department>();
+            EnsureDepartmentSchema();
             using var con = new MySqlConnection(AppConfig.ConnectionString);
-            using var cmd = new MySqlCommand("SELECT * FROM Departments ORDER BY DepartmentName", con);
+            using var cmd = new MySqlCommand(@"
+                SELECT d.DepartmentID, d.DepartmentName, COUNT(e.EmployeeID) AS ActiveEmployeeCount
+                FROM Departments d
+                LEFT JOIN Employees e ON e.DepartmentID = d.DepartmentID AND e.IsActive = 1
+                GROUP BY d.DepartmentID, d.DepartmentName
+                ORDER BY d.DepartmentName", con);
             con.Open();
             using var reader = cmd.ExecuteReader();
             while (reader.Read())
@@ -214,9 +329,60 @@ namespace PAYROLL
                 {
                     DepartmentId = Convert.ToInt32(reader["DepartmentID"]),
                     DepartmentName = reader["DepartmentName"].ToString() ?? "",
+                    ActiveEmployeeCount = Convert.ToInt32(reader["ActiveEmployeeCount"]),
                 });
             return list;
         }
+
+        public static List<AttendanceRecord> ListDepartmentAttendance(int departmentId, DateTime date)
+        {
+            EnsureDepartmentSchema();
+            var list = new List<AttendanceRecord>();
+            using var con = new MySqlConnection(AppConfig.ConnectionString);
+            using var cmd = new MySqlCommand(@"
+                SELECT e.EmployeeID, e.EmployeeName, a.AttendanceDate, a.TimeIn,
+                    a.BreakOut, a.BreakIn, a.TimeOut, COALESCE(a.OvertimeApproved, 0) AS OvertimeApproved,
+                    COALESCE(a.Status, 'Not recorded') AS Status,
+                    a.UndertimeStatus, a.UndertimeRemarks, a.UndertimeReviewedBy
+                FROM Employees e
+                LEFT JOIN Attendance a
+                    ON a.EmployeeID = e.EmployeeID AND a.AttendanceDate = @Date
+                WHERE e.DepartmentID = @DepartmentID AND e.IsActive = 1
+                ORDER BY e.EmployeeName", con);
+            cmd.Parameters.AddWithValue("@Date", date.Date);
+            cmd.Parameters.AddWithValue("@DepartmentID", departmentId);
+            con.Open();
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+                list.Add(new AttendanceRecord
+                {
+                    EmployeeId = Convert.ToInt32(reader["EmployeeID"]),
+                    EmployeeName = reader["EmployeeName"].ToString() ?? "",
+                    AttendanceDate = reader["AttendanceDate"] is DBNull
+                        ? date.Date : Convert.ToDateTime(reader["AttendanceDate"]),
+                    TimeIn = ReadAttendanceTime(reader["TimeIn"]),
+                    BreakOut = ReadAttendanceTime(reader["BreakOut"]),
+                    BreakIn = ReadAttendanceTime(reader["BreakIn"]),
+                    TimeOut = ReadAttendanceTime(reader["TimeOut"]),
+                    OvertimeApproved = Convert.ToBoolean(reader["OvertimeApproved"]),
+                    Status = reader["Status"].ToString() ?? "Not recorded",
+                    UndertimeStatus = reader["UndertimeStatus"] is DBNull
+                        ? null : reader["UndertimeStatus"].ToString(),
+                    UndertimeRemarks = reader["UndertimeRemarks"] is DBNull
+                        ? "" : reader["UndertimeRemarks"].ToString() ?? "",
+                    UndertimeReviewedBy = reader["UndertimeReviewedBy"] is DBNull
+                        ? "" : reader["UndertimeReviewedBy"].ToString() ?? "",
+                });
+            return list;
+        }
+
+        private static TimeSpan? ReadAttendanceTime(object value) => value switch
+        {
+            DBNull => null,
+            TimeSpan time => time,
+            DateTime dateTime => dateTime.TimeOfDay,
+            _ => TimeSpan.Parse(value.ToString() ?? "00:00:00"),
+        };
 
         public static void AddDepartment(string name)
         {

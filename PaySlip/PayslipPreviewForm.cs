@@ -49,6 +49,8 @@ namespace PAYROLL
             Add(b, "Daily Meal", payslip.DailyMeal);
             Add(b, "Uniform", payslip.Uniform);
             Add(b, "Laundry", payslip.Laundry);
+            foreach (var benefit in payslip.Benefits)
+                Add(b, benefit.BenefitName, benefit.Amount);
             Add(b, "Overtime", payslip.TotalOtPay);
             Add(b, "Regular Holiday", payslip.RegHolPayPrem);
             Add(b, "Special Holiday", payslip.SpHolPayPrem);

@@ -12,10 +12,13 @@ namespace PAYROLL
     // its content area, the same way Form1 gets embedded for "Employee."
     public class CompanyPanel : Panel
     {
-        private TextBox riceBox = null!, dailyMealBox = null!, uniformBox = null!, laundryBox = null!, incentivesBox = null!, hourlyRateBox = null!;
-        private DataGridView calendarEventsGrid = null!;
+        private TextBox hourlyRateBox = null!, benefitNameBox = null!, benefitAmountBox = null!;
+        private DataGridView benefitsGrid = null!;
+        private DataGridView calendarEventsGrid = null!, calendarDepartmentsGrid = null!;
         private MonthCalendar calendarMonth = null!;
-        private Label calendarDateLabel = null!;
+        private Label calendarDateLabel = null!, calendarHolidayLabel = null!;
+        private int? selectedCalendarDepartmentId;
+        private bool loadingCalendar;
         private DataGridView departmentsGrid = null!;
         private DataGridView leaveRequestsGrid = null!;
         private TextBox departmentName = null!;
@@ -29,7 +32,7 @@ namespace PAYROLL
             Padding = new Padding(24);
 
             var tabs = new TabControl { Dock = DockStyle.Fill };
-            tabs.TabPages.Add(BuildDefaultsTab());
+            tabs.TabPages.Add(BuildBenefitsTab());
             tabs.TabPages.Add(BuildCalendarTab());
             tabs.TabPages.Add(BuildLeaveRequestsTab());
             tabs.TabPages.Add(BuildDepartmentsTab());
@@ -44,89 +47,156 @@ namespace PAYROLL
 
         public void RefreshAll()
         {
-            LoadDefaults();
+            LoadBenefits();
             LoadCalendar();
             LoadLeaveRequests();
             LoadDepartments();
         }
 
         // ------------------------------------------------------------------
-        // PAYROLL DEFAULTS
+        // COMPANY BENEFITS
         // ------------------------------------------------------------------
-        private TabPage BuildDefaultsTab()
+        private TabPage BuildBenefitsTab()
         {
-            var page = new TabPage("Payroll Defaults") { BackColor = Theme.Bg, Padding = new Padding(20) };
-            var card = new RoundedPanel { Location = new Point(0, 0), Size = new Size(420, 360), SurroundColor = Theme.Bg };
-
+            var page = new TabPage("Company Benefits") { BackColor = Theme.Bg, Padding = new Padding(20) };
             var info = new Label
             {
-                Text = "These are the starting values every new payslip is generated with. " +
-                       "Management can still edit any individual payslip afterward.",
-                Font = Theme.Small, ForeColor = Theme.TextGray, Location = new Point(16, 14),
-                Size = new Size(388, 44), BackColor = Color.White
+                Text = "Add company benefits and their default amounts. Each new payslip includes these benefits by default.",
+                Font = Theme.Small, ForeColor = Theme.TextGray, Dock = DockStyle.Top,
+                Height = 34, BackColor = Theme.Bg
             };
-
-            riceBox = AddDefaultField(card, "Rice Allowance", 70);
-            dailyMealBox = AddDefaultField(card, "Daily Meal", 120);
-            uniformBox = AddDefaultField(card, "Uniform", 170);
-            laundryBox = AddDefaultField(card, "Laundry", 220);
-            incentivesBox = AddDefaultField(card, "Incentives", 270);
-            hourlyRateBox = AddDefaultField(card, "Default Hourly Rate", 320);
-
-            var saveBtn = new ModernButton { Text = "Save Defaults", Location = new Point(16, 366), Size = new Size(388, 40), SurroundColor = Theme.Bg };
-            saveBtn.Click += (s, e) =>
+            var entryBar = new Panel { Dock = DockStyle.Top, Height = 48, BackColor = Theme.Bg };
+            benefitNameBox = new TextBox { Location = new Point(0, 7), Width = 280, PlaceholderText = "Benefit name" };
+            benefitAmountBox = new TextBox { Location = new Point(290, 7), Width = 130, PlaceholderText = "Default amount" };
+            var addBenefit = new ModernButton
             {
-                try
-                {
-                    CompanyService.SavePayrollDefaults(new PayrollDefaultsConfig
-                    {
-                        RiceAllowance = ParseOrZero(riceBox),
-                        DailyMeal = ParseOrZero(dailyMealBox),
-                        Uniform = ParseOrZero(uniformBox),
-                        Laundry = ParseOrZero(laundryBox),
-                        Incentives = ParseOrZero(incentivesBox),
-                        DefaultHourlyRate = ParseOrZero(hourlyRateBox),
-                    });
-                    MessageBox.Show("Payroll defaults saved.", "Saved", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show("Could not save: " + ex.Message, "Database Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                }
+                Text = "Add Benefit", Location = new Point(430, 4), Size = new Size(140, 36), SurroundColor = Theme.Bg
             };
+            addBenefit.Click += (s, e) => AddBenefit();
+            entryBar.Controls.Add(benefitNameBox);
+            entryBar.Controls.Add(benefitAmountBox);
+            entryBar.Controls.Add(addBenefit);
 
-            card.Controls.Add(info);
-            page.Controls.Add(saveBtn);
-            page.Controls.Add(card);
+            var settingsBar = new Panel { Dock = DockStyle.Top, Height = 48, BackColor = Theme.Bg };
+            var rateLabel = new Label
+            {
+                Text = "Default hourly rate for new employees",
+                Location = new Point(0, 11), Size = new Size(260, 24),
+                Font = Theme.Body, ForeColor = Theme.TextDark
+            };
+            hourlyRateBox = new TextBox { Location = new Point(270, 7), Width = 130, TextAlign = HorizontalAlignment.Right };
+            var saveRate = new ModernButton
+            {
+                Text = "Save Rate", Location = new Point(410, 4), Size = new Size(120, 36), SurroundColor = Theme.Bg
+            };
+            saveRate.Click += (s, e) => SaveDefaultHourlyRate();
+            settingsBar.Controls.Add(rateLabel);
+            settingsBar.Controls.Add(hourlyRateBox);
+            settingsBar.Controls.Add(saveRate);
+
+            var deleteBar = new Panel { Dock = DockStyle.Top, Height = 44, BackColor = Theme.Bg };
+            var deleteBenefit = new ModernButton
+            {
+                Text = "Delete Selected Benefit", Location = new Point(0, 4), Size = new Size(205, 34),
+                SurroundColor = Theme.Bg, FillColor = Color.FromArgb(229, 231, 235)
+            };
+            deleteBenefit.ForeColor = Theme.TextDark;
+            deleteBenefit.Click += (s, e) => DeleteSelectedBenefit();
+            deleteBar.Controls.Add(deleteBenefit);
+
+            benefitsGrid = new DataGridView { Dock = DockStyle.Fill, ReadOnly = true };
+            GridStyle.Apply(benefitsGrid);
+            page.Controls.Add(benefitsGrid);
+            page.Controls.Add(deleteBar);
+            page.Controls.Add(settingsBar);
+            page.Controls.Add(entryBar);
+            page.Controls.Add(info);
             return page;
         }
 
-        private TextBox AddDefaultField(Panel card, string label, int y)
-        {
-            var lbl = new Label { Text = label, Font = Theme.Body, ForeColor = Theme.TextDark, AutoSize = true, Location = new Point(16, y + 4), BackColor = Color.White };
-            var box = new TextBox { Location = new Point(280, y), Width = 108, TextAlign = HorizontalAlignment.Right, Text = "0.00" };
-            card.Controls.Add(lbl);
-            card.Controls.Add(box);
-            return box;
-        }
-
-        private static decimal ParseOrZero(TextBox box) => decimal.TryParse(box.Text, out var v) ? v : 0m;
-
-        private void LoadDefaults()
+        private void LoadBenefits()
         {
             try
             {
-                var d = CompanyService.GetPayrollDefaults();
-                riceBox.Text = d.RiceAllowance.ToString("0.00");
-                dailyMealBox.Text = d.DailyMeal.ToString("0.00");
-                uniformBox.Text = d.Uniform.ToString("0.00");
-                laundryBox.Text = d.Laundry.ToString("0.00");
-                incentivesBox.Text = d.Incentives.ToString("0.00");
-                hourlyRateBox.Text = d.DefaultHourlyRate.ToString("0.00");
+                var benefits = CompanyService.ListBenefits();
+                var table = new DataTable();
+                table.Columns.Add("BenefitID", typeof(int));
+                table.Columns.Add("Benefit");
+                table.Columns.Add("Default Amount", typeof(decimal));
+                foreach (var benefit in benefits)
+                    table.Rows.Add(benefit.BenefitId, benefit.BenefitName, benefit.DefaultAmount);
+                benefitsGrid.DataSource = table;
+                if (benefitsGrid.Columns["BenefitID"] is DataGridViewColumn idColumn)
+                    idColumn.Visible = false;
+                if (benefitsGrid.Columns["Default Amount"] is DataGridViewColumn amountColumn)
+                    amountColumn.DefaultCellStyle.Format = "N2";
+                hourlyRateBox.Text = CompanyService.GetPayrollDefaults().DefaultHourlyRate.ToString("0.00");
             }
             catch (Exception ex)
             {
-                MessageBox.Show("Could not load payroll defaults: " + ex.Message, "Database Error",
+                MessageBox.Show("Could not load company benefits: " + ex.Message, "Database Error",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void AddBenefit()
+        {
+            string name = benefitNameBox.Text.Trim();
+            if (name.Length == 0 || !decimal.TryParse(benefitAmountBox.Text, out decimal amount) || amount < 0)
+            {
+                MessageBox.Show("Enter a benefit name and a non-negative amount.", "Check benefit details",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            try
+            {
+                CompanyService.AddBenefit(name, amount);
+                benefitNameBox.Clear();
+                benefitAmountBox.Clear();
+                LoadBenefits();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Could not add benefit: " + ex.Message, "Company Benefits",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void DeleteSelectedBenefit()
+        {
+            if (benefitsGrid.CurrentRow?.Cells["BenefitID"].Value is not int id) return;
+            if (MessageBox.Show(this, "Remove this benefit from future payslips? Existing saved payslips keep their recorded amount.",
+                    "Delete Benefit", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+                return;
+            try
+            {
+                CompanyService.DeleteBenefit(id);
+                LoadBenefits();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Could not delete benefit: " + ex.Message, "Company Benefits",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void SaveDefaultHourlyRate()
+        {
+            if (!decimal.TryParse(hourlyRateBox.Text, out decimal rate) || rate <= 0)
+            {
+                MessageBox.Show("Enter a positive hourly rate.", "Hourly Rate", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            try
+            {
+                var defaults = CompanyService.GetPayrollDefaults();
+                defaults.DefaultHourlyRate = rate;
+                CompanyService.SavePayrollDefaults(defaults);
+                MessageBox.Show("Default hourly rate saved.", "Saved", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Could not save hourly rate: " + ex.Message, "Database Error",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
@@ -152,7 +222,7 @@ namespace PAYROLL
 
             var title = new Label
             {
-                Text = "Philippine Calendar",
+                Text = "Calendar & Attendance",
                 Font = Theme.H2,
                 ForeColor = Theme.TextDark,
                 Dock = DockStyle.Fill,
@@ -179,24 +249,65 @@ namespace PAYROLL
 
             calendarEventsGrid = new DataGridView { Dock = DockStyle.Fill, ReadOnly = true };
             GridStyle.Apply(calendarEventsGrid);
-            var eventsPanel = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg };
-            var toolbar = new Panel { Dock = DockStyle.Top, Height = 44, BackColor = Theme.Bg };
+            calendarDepartmentsGrid = new DataGridView { Dock = DockStyle.Fill, ReadOnly = true };
+            GridStyle.Apply(calendarDepartmentsGrid);
+            calendarDepartmentsGrid.SelectionChanged += (s, e) =>
+            {
+                if (!loadingCalendar) LoadCalendarDepartmentAttendance();
+            };
+
+            var details = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5,
+                BackColor = Theme.Bg, Padding = new Padding(0)
+            };
+            details.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            details.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+            details.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+            details.RowStyles.Add(new RowStyle(SizeType.Absolute, 150));
+            details.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+            details.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+            calendarHolidayLabel = new Label
+            {
+                Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft,
+                Font = Theme.BodyBold, ForeColor = Theme.TextDark,
+                BackColor = Color.White, Padding = new Padding(12, 0, 8, 0),
+                AutoEllipsis = true
+            };
+            var departmentHeading = new Label
+            {
+                Text = "DEPARTMENTS  ·  ACTIVE EMPLOYEES", Dock = DockStyle.Fill,
+                Font = Theme.SmallBold, ForeColor = Theme.TextGray,
+                TextAlign = ContentAlignment.MiddleLeft, BackColor = Theme.Bg
+            };
+            var attendanceToolbar = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg };
+            var attendanceHeading = new Label
+            {
+                Text = "Employee attendance", Font = Theme.BodyBold,
+                ForeColor = Theme.TextDark, Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft, BackColor = Theme.Bg
+            };
             var approveOvertime = new ModernButton
             {
                 Text = "Approve Selected OT",
-                Location = new Point(0, 4),
+                Dock = DockStyle.Right,
                 Size = new Size(190, 34),
                 SurroundColor = Theme.Bg
             };
             approveOvertime.Click += (s, e) => ApproveSelectedOvertime();
-            toolbar.Controls.Add(approveOvertime);
-            eventsPanel.Controls.Add(calendarEventsGrid);
-            eventsPanel.Controls.Add(toolbar);
+            attendanceToolbar.Controls.Add(attendanceHeading);
+            attendanceToolbar.Controls.Add(approveOvertime);
+            details.Controls.Add(calendarHolidayLabel, 0, 0);
+            details.Controls.Add(departmentHeading, 0, 1);
+            details.Controls.Add(calendarDepartmentsGrid, 0, 2);
+            details.Controls.Add(attendanceToolbar, 0, 3);
+            details.Controls.Add(calendarEventsGrid, 0, 4);
 
             layout.Controls.Add(title, 0, 0);
             layout.Controls.Add(calendarDateLabel, 1, 0);
             layout.Controls.Add(calendarMonth, 0, 1);
-            layout.Controls.Add(eventsPanel, 1, 1);
+            layout.Controls.Add(details, 1, 1);
             page.Controls.Add(layout);
             return page;
         }
@@ -210,25 +321,15 @@ namespace PAYROLL
                 DateTime monthStart = new DateTime(selected.Year, selected.Month, 1);
                 DateTime monthEnd = monthStart.AddMonths(1).AddDays(-1);
                 var holidays = CompanyService.ListHolidays(selected.Year);
-                var attendance = AttendanceService.ListForDate(selected);
                 var monthLeaveRequests = LeaveService.ListForRange(monthStart, monthEnd);
-                var leaveRequests = monthLeaveRequests.Where(leave =>
-                    selected >= leave.StartDate.Date && selected <= leave.EndDate.Date).ToList();
-                var table = new DataTable();
-                table.Columns.Add("EmployeeID", typeof(int));
-                table.Columns.Add("AttendanceDate", typeof(DateTime));
-                table.Columns.Add("Event");
-                table.Columns.Add("Category");
-                table.Columns.Add("Employee");
-                table.Columns.Add("Time In");
-                table.Columns.Add("Break Out");
-                table.Columns.Add("Break In");
-                table.Columns.Add("Time Out");
-                table.Columns.Add("Overtime Hours");
-                table.Columns.Add("Overtime Approval");
-                table.Columns.Add("OvertimeMinutes", typeof(int));
-                table.Columns.Add("OvertimeApproved", typeof(bool));
-                table.Columns.Add("Undertime");
+                var selectedHolidays = holidays.Where(holiday => holiday.HolidayDate.Date == selected).ToList();
+                calendarHolidayLabel.Text = selectedHolidays.Count == 0
+                    ? "No holiday on this date"
+                    : "HOLIDAY  ·  " + string.Join("  /  ", selectedHolidays.Select(holiday =>
+                        $"{holiday.HolidayName} ({holiday.HolidayType})"));
+                calendarHolidayLabel.ForeColor = selectedHolidays.Count == 0
+                    ? Theme.TextGray : Color.FromArgb(4, 120, 87);
+
                 calendarMonth.RemoveAllBoldedDates();
                 foreach (var h in holidays)
                 {
@@ -244,41 +345,106 @@ namespace PAYROLL
                     for (DateTime date = leaveStart; date <= leaveEnd; date = date.AddDays(1))
                         calendarMonth.AddBoldedDate(date);
                 }
-                foreach (var h in holidays.Where(holiday => holiday.HolidayDate == selected))
-                    table.Rows.Add(DBNull.Value, selected, h.HolidayName, h.HolidayType + " Holiday",
-                        "", "", "", "", "", "", DBNull.Value, DBNull.Value);
-                foreach (var record in attendance)
-                {
-                    int overtimeMinutes = record.TimeOut.HasValue ? AttendanceService.GetOvertimeMinutes(record) : 0;
-                    table.Rows.Add(record.EmployeeId, record.AttendanceDate.Date, record.Status, "Attendance", record.EmployeeName,
-                        record.TimeIn?.ToString(@"hh\:mm") ?? "",
-                        record.BreakOut?.ToString(@"hh\:mm") ?? "",
-                        record.BreakIn?.ToString(@"hh\:mm") ?? "",
-                        record.TimeOut?.ToString(@"hh\:mm") ?? "",
-                        (overtimeMinutes / 60m).ToString("0.##"),
-                        overtimeMinutes == 0 ? "—" : record.OvertimeApproved ? "Approved" : "Pending",
-                        overtimeMinutes, record.OvertimeApproved, UndertimeText(record));
-                }
-                foreach (var leave in leaveRequests)
-                {
-                    string leaveStatus = leave.Status == "Approved" && leave.Paid
-                        ? "Approved (Paid)"
-                        : leave.Status;
-                    table.Rows.Add(DBNull.Value, selected, "Leave", leaveStatus, leave.EmployeeName,
-                        "", "", "", "", "", "", DBNull.Value, DBNull.Value);
-                }
                 calendarMonth.UpdateBoldedDates();
-                calendarEventsGrid.DataSource = table;
-                calendarEventsGrid.Columns["EmployeeID"]!.Visible = false;
-                calendarEventsGrid.Columns["AttendanceDate"]!.Visible = false;
-                calendarEventsGrid.Columns["OvertimeMinutes"]!.Visible = false;
-                calendarEventsGrid.Columns["OvertimeApproved"]!.Visible = false;
-
+                LoadCalendarDepartments();
             }
             catch (Exception ex)
             {
                 MessageBox.Show("Could not load calendar: " + ex.Message, "Database Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+        }
+
+        private void LoadCalendarDepartments()
+        {
+            loadingCalendar = true;
+            var departments = CompanyService.ListDepartments();
+            var table = new DataTable();
+            table.Columns.Add("DepartmentID", typeof(int));
+            table.Columns.Add("Department");
+            table.Columns.Add("Active Employees", typeof(int));
+            foreach (var department in departments)
+                table.Rows.Add(department.DepartmentId, department.DepartmentName, department.ActiveEmployeeCount);
+            calendarDepartmentsGrid.DataSource = table;
+            if (calendarDepartmentsGrid.Columns["DepartmentID"] is DataGridViewColumn idColumn)
+                idColumn.Visible = false;
+            if (calendarDepartmentsGrid.Columns["Active Employees"] is DataGridViewColumn countColumn)
+            {
+                countColumn.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
+                countColumn.HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleRight;
+                countColumn.AutoSizeMode = DataGridViewAutoSizeColumnMode.AllCells;
+            }
+            if (calendarDepartmentsGrid.Columns["Department"] is DataGridViewColumn nameColumn)
+                nameColumn.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+
+            int targetDepartmentId = selectedCalendarDepartmentId ?? departments.FirstOrDefault()?.DepartmentId ?? 0;
+            int targetIndex = departments.FindIndex(department => department.DepartmentId == targetDepartmentId);
+            if (targetIndex < 0 && departments.Count > 0) targetIndex = 0;
+            if (targetIndex >= 0 && targetIndex < calendarDepartmentsGrid.Rows.Count)
+            {
+                calendarDepartmentsGrid.ClearSelection();
+                calendarDepartmentsGrid.Rows[targetIndex].Selected = true;
+                calendarDepartmentsGrid.CurrentCell = calendarDepartmentsGrid.Rows[targetIndex].Cells["Department"];
+                selectedCalendarDepartmentId = departments[targetIndex].DepartmentId;
+            }
+            else
+            {
+                selectedCalendarDepartmentId = null;
+                calendarEventsGrid.DataSource = null;
+            }
+            loadingCalendar = false;
+            LoadCalendarDepartmentAttendance();
+        }
+
+        private void LoadCalendarDepartmentAttendance()
+        {
+            if (loadingCalendar || calendarDepartmentsGrid.CurrentRow?.Cells["DepartmentID"].Value is not int departmentId)
+                return;
+            selectedCalendarDepartmentId = departmentId;
+            DateTime selected = calendarMonth.SelectionStart.Date;
+            var attendance = CompanyService.ListDepartmentAttendance(departmentId, selected);
+            var leaveByEmployee = LeaveService.ListForRange(selected, selected)
+                .GroupBy(leave => leave.EmployeeId)
+                .ToDictionary(group => group.Key, group => string.Join(", ", group.Select(leave =>
+                    leave.Status == "Approved" && leave.Paid ? "Approved (Paid)" : leave.Status)));
+            var table = new DataTable();
+            table.Columns.Add("EmployeeID", typeof(int));
+            table.Columns.Add("AttendanceDate", typeof(DateTime));
+            table.Columns.Add("Employee");
+            table.Columns.Add("Status");
+            table.Columns.Add("Time In");
+            table.Columns.Add("Break Out");
+            table.Columns.Add("Break In");
+            table.Columns.Add("Time Out");
+            table.Columns.Add("Overtime Hours");
+            table.Columns.Add("Overtime Approval");
+            table.Columns.Add("Leave");
+            table.Columns.Add("OvertimeMinutes", typeof(int));
+            table.Columns.Add("OvertimeApproved", typeof(bool));
+            table.Columns.Add("Undertime");
+            foreach (var record in attendance)
+            {
+                int overtimeMinutes = record.TimeOut.HasValue ? AttendanceService.GetOvertimeMinutes(record) : 0;
+                table.Rows.Add(record.EmployeeId, record.AttendanceDate.Date, record.EmployeeName,
+                    record.Status,
+                    record.TimeIn?.ToString(@"hh\:mm") ?? "—",
+                    record.BreakOut?.ToString(@"hh\:mm") ?? "—",
+                    record.BreakIn?.ToString(@"hh\:mm") ?? "—",
+                    record.TimeOut?.ToString(@"hh\:mm") ?? "—",
+                    (overtimeMinutes / 60m).ToString("0.##"),
+                    overtimeMinutes == 0 ? "—" : record.OvertimeApproved ? "Approved" : "Pending",
+                    leaveByEmployee.TryGetValue(record.EmployeeId, out var leaveStatus) ? leaveStatus : "—",
+                    overtimeMinutes, record.OvertimeApproved, UndertimeText(record));
+            }
+            calendarEventsGrid.DataSource = table;
+            calendarEventsGrid.Columns["EmployeeID"]!.Visible = false;
+            calendarEventsGrid.Columns["AttendanceDate"]!.Visible = false;
+            calendarEventsGrid.Columns["OvertimeMinutes"]!.Visible = false;
+            calendarEventsGrid.Columns["OvertimeApproved"]!.Visible = false;
+            if (calendarEventsGrid.Columns["Employee"] is DataGridViewColumn employeeColumn)
+                employeeColumn.AutoSizeMode = DataGridViewAutoSizeColumnMode.AllCells;
+            foreach (string columnName in new[] { "Time In", "Break Out", "Break In", "Time Out", "Overtime Hours" })
+                if (calendarEventsGrid.Columns[columnName] is DataGridViewColumn timeColumn)
+                    timeColumn.MinimumWidth = 78;
         }
 
         // e.g. "1h 20m (Needs follow-up)" until management has talked to the employee.

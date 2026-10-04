@@ -9,7 +9,10 @@ namespace PAYROLL
         public static void Create(Payslip p)
         {
             CompanyService.EnsureDepartmentSchema();
+            CompanyService.EnsureBenefitsSchema();
             using var con = new MySqlConnection(AppConfig.ConnectionString);
+            con.Open();
+            using var transaction = con.BeginTransaction();
             using var cmd = new MySqlCommand(@"
                 INSERT INTO Payslips
                 (EmployeeID, CutoffStart, CutoffEnd, NoOfDays, HourlyRate, BasicPay,
@@ -22,7 +25,7 @@ namespace PAYROLL
                  @NdPayPrem, @RiceAllowance, @DailyMeal, @Uniform, @Laundry, @TotalOtPay,
                  @RegHolPayPrem, @SpHolPayPrem, @LeaveWithPay, @Adjustment,
                  @Absences, @LateUtOb, @SssContribution, @PhilHealthContribution, @HmdfContribution, @Loans,
-                 @AttendanceBonus, @TenureBonus, @Oic, @Account, @Incentives, @InternalCommission)", con);
+                 @AttendanceBonus, @TenureBonus, @Oic, @Account, @Incentives, @InternalCommission)", con, transaction);
 
             cmd.Parameters.AddWithValue("@EmployeeID", p.EmployeeId);
             cmd.Parameters.AddWithValue("@CutoffStart", p.CutoffStart);
@@ -53,8 +56,18 @@ namespace PAYROLL
             cmd.Parameters.AddWithValue("@Incentives", p.Incentives);
             cmd.Parameters.AddWithValue("@InternalCommission", p.InternalCommission);
 
-            con.Open();
             cmd.ExecuteNonQuery();
+            int payslipId = Convert.ToInt32(cmd.LastInsertedId);
+            foreach (var benefit in p.Benefits)
+            {
+                using var benefitCmd = new MySqlCommand(@"
+                    INSERT INTO PayslipBenefitItems (PayslipID, BenefitName, Amount)
+                    VALUES (@PayslipID, @BenefitName, @Amount)", con, transaction);
+                benefitCmd.Parameters.AddWithValue("@PayslipID", payslipId);
+                benefitCmd.Parameters.AddWithValue("@BenefitName", benefit.BenefitName);
+                benefitCmd.Parameters.AddWithValue("@Amount", benefit.Amount);
+                benefitCmd.ExecuteNonQuery();
+            }
 
             // Keep the employee's roster row current: hourly rate for next
             // time this form opens, and the pay summary fields so the
@@ -68,7 +81,7 @@ namespace PAYROLL
                     OvertimePay = @TotalOtPay,
                     Deductions = @TotalDeductions,
                     NetPay = @NetPay
-                WHERE EmployeeID = @EmployeeID", con);
+                WHERE EmployeeID = @EmployeeID", con, transaction);
             updateEmployee.Parameters.AddWithValue("@Rate", p.HourlyRate);
             updateEmployee.Parameters.AddWithValue("@BasicPay", p.BasicPay);
             updateEmployee.Parameters.AddWithValue("@Total", p.Total);
@@ -77,11 +90,13 @@ namespace PAYROLL
             updateEmployee.Parameters.AddWithValue("@NetPay", p.NetPay);
             updateEmployee.Parameters.AddWithValue("@EmployeeID", p.EmployeeId);
             updateEmployee.ExecuteNonQuery();
+            transaction.Commit();
         }
 
         public static List<Payslip> LoadAll()
         {
             CompanyService.EnsureDepartmentSchema();
+            CompanyService.EnsureBenefitsSchema();
             var list = new List<Payslip>();
             using var con = new MySqlConnection(AppConfig.ConnectionString);
             using var cmd = new MySqlCommand(@"
@@ -96,11 +111,13 @@ namespace PAYROLL
             using var reader = cmd.ExecuteReader();
             while (reader.Read())
                 list.Add(Map(reader));
+            LoadBenefitItems(list);
             return list;
         }
 
         public static List<Payslip> LoadForEmployee(int employeeId)
         {
+            CompanyService.EnsureBenefitsSchema();
             var list = new List<Payslip>();
             using var con = new MySqlConnection(AppConfig.ConnectionString);
             using var cmd = new MySqlCommand(@"
@@ -116,11 +133,13 @@ namespace PAYROLL
             using var reader = cmd.ExecuteReader();
             while (reader.Read())
                 list.Add(Map(reader));
+            LoadBenefitItems(list);
             return list;
         }
 
         public static List<Payslip> LoadRecentForEmployee(int employeeId)
         {
+            CompanyService.EnsureBenefitsSchema();
             var list = new List<Payslip>();
             using var con = new MySqlConnection(AppConfig.ConnectionString);
             using var cmd = new MySqlCommand(@"
@@ -134,10 +153,44 @@ namespace PAYROLL
                 ORDER BY ps.CutoffEnd DESC, ps.CreatedAt DESC", con);
             cmd.Parameters.AddWithValue("@EmployeeID", employeeId);
             con.Open();
+            using (var reader = cmd.ExecuteReader())
+                while (reader.Read())
+                    list.Add(Map(reader));
+            LoadBenefitItems(list);
+            return list;
+        }
+
+        private static void LoadBenefitItems(List<Payslip> payslips)
+        {
+            if (payslips.Count == 0) return;
+            var placeholders = new List<string>();
+            using var con = new MySqlConnection(AppConfig.ConnectionString);
+            using var cmd = new MySqlCommand { Connection = con };
+            for (int i = 0; i < payslips.Count; i++)
+            {
+                string parameter = "@id" + i;
+                placeholders.Add(parameter);
+                cmd.Parameters.AddWithValue(parameter, payslips[i].PayslipId);
+            }
+            cmd.CommandText = $@"
+                SELECT PayslipID, BenefitName, Amount
+                FROM PayslipBenefitItems
+                WHERE PayslipID IN ({string.Join(",", placeholders)})
+                ORDER BY BenefitItemID";
+            var byId = new Dictionary<int, Payslip>();
+            foreach (var payslip in payslips) byId[payslip.PayslipId] = payslip;
+            con.Open();
             using var reader = cmd.ExecuteReader();
             while (reader.Read())
-                list.Add(Map(reader));
-            return list;
+            {
+                int id = Convert.ToInt32(reader["PayslipID"]);
+                if (!byId.TryGetValue(id, out var payslip)) continue;
+                payslip.Benefits.Add(new PayslipBenefitItem
+                {
+                    BenefitName = reader["BenefitName"].ToString() ?? "Benefit",
+                    Amount = Convert.ToDecimal(reader["Amount"])
+                });
+            }
         }
 
         private static Payslip Map(MySqlDataReader r) => new Payslip

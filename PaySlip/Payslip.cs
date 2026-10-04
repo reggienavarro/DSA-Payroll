@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace PAYROLL
 {
@@ -28,9 +29,23 @@ namespace PAYROLL
         public decimal AttendanceBonus, TenureBonus, Oic, Account, Incentives,
             InternalCommission;
 
+        // Benefit names and amounts are snapshotted onto each payslip so
+        // changing a company default never rewrites a previously issued slip.
+        public List<PayslipBenefitItem> Benefits = new();
+
         public decimal Total =>
             BasicPay + NdPayPrem + RiceAllowance + DailyMeal + Uniform + Laundry +
-            TotalOtPay + RegHolPayPrem + SpHolPayPrem + LeaveWithPay + Adjustment;
+            TotalOtPay + RegHolPayPrem + SpHolPayPrem + LeaveWithPay + Adjustment + BenefitTotal;
+
+        public decimal BenefitTotal
+        {
+            get
+            {
+                decimal total = 0m;
+                foreach (var benefit in Benefits) total += benefit.Amount;
+                return total;
+            }
+        }
 
         public decimal TotalDeductions =>
             Absences + LateUtOb + SssContribution + PhilHealthContribution + HmdfContribution + Loans;
@@ -41,6 +56,12 @@ namespace PAYROLL
             AttendanceBonus + TenureBonus + Oic + Account + Incentives + InternalCommission;
 
         public decimal TotalAmountReceivable => NetPay + TotalBonus;
+    }
+
+    public class PayslipBenefitItem
+    {
+        public string BenefitName = "";
+        public decimal Amount;
     }
 
     // Company-wide starting values for a new payslip. These are defaults for

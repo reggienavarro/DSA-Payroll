@@ -15,6 +15,7 @@ namespace PAYROLL
     {
         private readonly Dictionary<int, decimal> employeeRates = new(); // EmployeeID -> HourlyRate
         private readonly Dictionary<string, TextBox> fields = new();
+        private readonly List<CompanyBenefit> companyBenefits = new();
         private readonly int? preselectEmployeeId;
 
         private ComboBox employeeCombo = null!;
@@ -36,9 +37,8 @@ namespace PAYROLL
             var scroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true, BackColor = Theme.Bg };
             var content = new Panel { Location = new Point(0, 0), Width = 600, BackColor = Theme.Bg };
 
-            // Read from the Company module's configurable defaults. Falls
-            // back to the original hardcoded values if that table isn't set
-            // up yet, so this never hard-crashes an older database.
+            // The company benefits are read once as defaults; the values the
+            // user saves are copied onto this payslip as historical snapshots.
             PayrollDefaultsConfig defaults;
             try { defaults = CompanyService.GetPayrollDefaults(); }
             catch
@@ -53,17 +53,21 @@ namespace PAYROLL
                     DefaultHourlyRate = PayrollDefaults.DefaultHourlyRate,
                 };
             }
+            try { companyBenefits.AddRange(CompanyService.ListBenefits()); }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Could not load company benefits: " + ex.Message,
+                    "Company Benefits", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
 
             int y = 20;
             BuildHeaderCard(content, ref y, defaults.DefaultHourlyRate);
 
+            BuildBenefitSection(content, ref y);
+
             BuildSection(content, ref y, "EARNINGS",
                 new[]
                 {
-                    ("riceAllowance", "Rice Allowance", defaults.RiceAllowance),
-                    ("dailyMeal", "Daily Meal", defaults.DailyMeal),
-                    ("uniform", "Uniform", defaults.Uniform),
-                    ("laundry", "Laundry", defaults.Laundry),
                     ("totalOtPay", "Total OT Pay", 0m),
                     ("regHolPayPrem", "Regular Holidays", 0m),
                     ("spHolPayPrem", "Special Holidays", 0m),
@@ -91,7 +95,6 @@ namespace PAYROLL
                     ("tenureBonus", "Tenure Bonus", 0m),
                     ("oic", "OIC", 0m),
                     ("account", "Account", 0m),
-                    ("incentives", "Incentives", defaults.Incentives),
                     ("internalCommission", "Internal Commission", 0m),
                 }, out var totalBonusRow, "TOTAL BONUS");
             totalBonusValue = totalBonusRow;
@@ -300,6 +303,69 @@ namespace PAYROLL
             totalRow = AddHighlightRow(content, ref y, totalLabel);
         }
 
+        private void BuildBenefitSection(Panel content, ref int y)
+        {
+            var header = new Label
+            {
+                Text = "COMPANY BENEFITS", Font = Theme.BodyBold, ForeColor = Theme.Accent,
+                AutoSize = true, Location = new Point(20, y), BackColor = Theme.Bg
+            };
+            content.Controls.Add(header);
+            y += 26;
+
+            int rowCount = Math.Max(companyBenefits.Count, 1);
+            var card = new RoundedPanel
+            {
+                Location = new Point(20, y), Size = new Size(560, rowCount * 34 + 16),
+                SurroundColor = Theme.Bg
+            };
+            if (companyBenefits.Count == 0)
+            {
+                card.Controls.Add(new Label
+                {
+                    Text = "No company benefits configured.", Font = Theme.Body,
+                    ForeColor = Theme.TextGray, AutoSize = true, Location = new Point(16, 16),
+                    BackColor = Color.White
+                });
+            }
+            else
+            {
+                int rowY = 10;
+                foreach (var benefit in companyBenefits)
+                {
+                    string key = BenefitFieldKey(benefit.BenefitId);
+                    var label = new Label
+                    {
+                        Text = benefit.BenefitName, Font = Theme.Body, ForeColor = Theme.TextDark,
+                        AutoSize = true, Location = new Point(16, rowY + 4), BackColor = Color.White
+                    };
+                    var peso = new Label
+                    {
+                        Text = "₱", Font = Theme.Body, ForeColor = Theme.TextGray,
+                        AutoSize = true, Location = new Point(420, rowY + 4), BackColor = Color.White
+                    };
+                    var amount = new TextBox
+                    {
+                        Location = new Point(440, rowY), Width = 104,
+                        TextAlign = HorizontalAlignment.Right, Font = Theme.Body,
+                        BorderStyle = BorderStyle.FixedSingle,
+                        Text = benefit.DefaultAmount.ToString("0.00")
+                    };
+                    amount.TextChanged += (s, e) => RecomputeAll();
+                    fields[key] = amount;
+                    card.Controls.Add(label);
+                    card.Controls.Add(peso);
+                    card.Controls.Add(amount);
+                    rowY += 34;
+                }
+            }
+
+            content.Controls.Add(card);
+            y += card.Height + 10;
+        }
+
+        private static string BenefitFieldKey(int benefitId) => "companyBenefit_" + benefitId;
+
         private Label AddHighlightRow(Panel content, ref int y, string label, bool big = false)
         {
             var bg = new Panel { Location = new Point(20, y), Size = new Size(560, big ? 48 : 36), BackColor = Theme.Navy };
@@ -338,9 +404,10 @@ namespace PAYROLL
         {
             if (totalValue == null) return; // still under construction
 
-            decimal total = ParseField("basicPay") + ParseField("riceAllowance") +
-                ParseField("dailyMeal") + ParseField("uniform") + ParseField("laundry") + ParseField("totalOtPay") +
+            decimal total = ParseField("basicPay") + ParseField("totalOtPay") +
                 ParseField("regHolPayPrem") + ParseField("spHolPayPrem") + ParseField("leaveWithPay") + ParseField("adjustment");
+            foreach (var benefit in companyBenefits)
+                total += ParseField(BenefitFieldKey(benefit.BenefitId));
             totalValue.Text = Theme.Money(total);
 
             decimal totalDeductions = ParseField("lateUtOb") + ParseField("sss") +
@@ -391,10 +458,6 @@ namespace PAYROLL
                 NoOfDays = ParseField("noOfDays"),
                 HourlyRate = ParseField("hourlyRate"),
                 BasicPay = ParseField("basicPay"),
-                RiceAllowance = ParseField("riceAllowance"),
-                DailyMeal = ParseField("dailyMeal"),
-                Uniform = ParseField("uniform"),
-                Laundry = ParseField("laundry"),
                 TotalOtPay = ParseField("totalOtPay"),
                 RegHolPayPrem = ParseField("regHolPayPrem"),
                 SpHolPayPrem = ParseField("spHolPayPrem"),
@@ -410,9 +473,14 @@ namespace PAYROLL
                 TenureBonus = ParseField("tenureBonus"),
                 Oic = ParseField("oic"),
                 Account = ParseField("account"),
-                Incentives = ParseField("incentives"),
                 InternalCommission = ParseField("internalCommission"),
             };
+            foreach (var benefit in companyBenefits)
+                p.Benefits.Add(new PayslipBenefitItem
+                {
+                    BenefitName = benefit.BenefitName,
+                    Amount = ParseField(BenefitFieldKey(benefit.BenefitId))
+                });
 
             try
             {
