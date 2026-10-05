@@ -443,6 +443,12 @@ namespace PAYROLL
                 AutoSize = true, Location = new Point(0, 0), BackColor = Theme.Bg };
             var subtitle = new Label { Text = "Submit a request and follow its review status here.", Font = Theme.Small,
                 ForeColor = Theme.TextGray, AutoSize = true, Location = new Point(0, 36), BackColor = Theme.Bg };
+            try
+            {
+                var balance = LeaveService.GetCreditBalance(employeeId, DateTime.Today.Year);
+                subtitle.Text = $"{DateTime.Today.Year} paid leave credits: {balance.AvailableDays:0.##} available of {balance.EntitledDays:0.##} days. Submit a request and follow its review status here.";
+            }
+            catch { /* Keep leave requests usable if the balance lookup is unavailable. */ }
             var requestButton = new ModernButton { Text = "Request Leave", Size = new Size(160, 38),
                 Anchor = AnchorStyles.Top | AnchorStyles.Right, Location = new Point(0, 4), SurroundColor = Theme.Bg };
             header.Resize += (s, e) => requestButton.Left = header.ClientSize.Width - requestButton.Width;

@@ -16,6 +16,7 @@ namespace PAYROLL
         private readonly Label pendingSummary = new();
         private readonly ModernButton approve = new() { Text = "Approve as Paid", Size = new Size(155, 38) };
         private readonly ModernButton reject = new() { Text = "Reject", Size = new Size(110, 38), FillColor = Color.FromArgb(229, 231, 235), ForeColor = Theme.TextDark };
+        private readonly ModernButton manageCredits = new() { Text = "Manage Credits", Size = new Size(140, 34) };
 
         public LeaveRequestsPanel(string reviewer, Action? afterReview = null)
         {
@@ -36,15 +37,19 @@ namespace PAYROLL
             statusFilter.SelectedIndex = 0;
             var refresh = new ModernButton { Text = "Refresh", Size = new Size(100, 34), Anchor = AnchorStyles.Top | AnchorStyles.Right,
                 SurroundColor = Theme.Bg, Location = new Point(0, 0) };
+            manageCredits.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            manageCredits.SurroundColor = Theme.Bg;
             heading.Resize += (s, e) =>
             {
                 refresh.Location = new Point(heading.ClientSize.Width - refresh.Width, 3);
-                statusFilter.Location = new Point(refresh.Left - statusFilter.Width - 12, 6);
+                manageCredits.Location = new Point(refresh.Left - manageCredits.Width - 8, 3);
+                statusFilter.Location = new Point(manageCredits.Left - statusFilter.Width - 12, 6);
             };
             heading.Controls.Add(title);
             heading.Controls.Add(pendingSummary);
             heading.Controls.Add(statusFilter);
             heading.Controls.Add(refresh);
+            heading.Controls.Add(manageCredits);
 
             var footer = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 54, BackColor = Theme.Bg,
                 FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Padding = new Padding(0, 7, 0, 0) };
@@ -60,6 +65,12 @@ namespace PAYROLL
             requestsGrid.SelectionChanged += (s, e) => UpdateActionState();
             statusFilter.SelectedIndexChanged += (s, e) => RefreshRequests();
             refresh.Click += (s, e) => RefreshRequests();
+            manageCredits.Click += (s, e) =>
+            {
+                using var form = new LeaveCreditsForm(reviewer);
+                form.ShowDialog(FindForm());
+                RefreshRequests();
+            };
             approve.Click += (s, e) => ReviewSelected(true);
             reject.Click += (s, e) => ReviewSelected(false);
 
@@ -84,12 +95,14 @@ namespace PAYROLL
                 table.Columns.Add("Employee");
                 table.Columns.Add("Start Date");
                 table.Columns.Add("End Date");
+                table.Columns.Add("Workdays", typeof(decimal));
                 table.Columns.Add("Reason");
                 table.Columns.Add("Status");
                 table.Columns.Add("Paid", typeof(bool));
                 foreach (var request in visible)
                     table.Rows.Add(request.LeaveRequestId, request.EmployeeName,
                         request.StartDate.ToString("MMM d, yyyy"), request.EndDate.ToString("MMM d, yyyy"),
+                        LeaveService.GetRequestedWorkdays(request.StartDate, request.EndDate),
                         request.Reason, request.Status, request.Paid);
                 requestsGrid.DataSource = table;
                 if (requestsGrid.Columns["RequestID"] is DataGridViewColumn idColumn) idColumn.Visible = false;

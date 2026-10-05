@@ -521,7 +521,7 @@ namespace PAYROLL
                 using var transaction = connection.BeginTransaction();
                 try
                 {
-                    foreach (string table in new[] { "Attendance", "LeaveRequests", "SalaryTickets", "Payslips", "Accounts" })
+                    foreach (string table in new[] { "Attendance", "LeaveRequests", "EmployeeLeaveBalances", "SalaryTickets", "Payslips", "Accounts" })
                     {
                         try
                         {
