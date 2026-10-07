@@ -19,6 +19,8 @@ namespace PAYROLL
         private DashboardCard dateCard = null!, netPayCard = null!, grossPayCard = null!;
         private PaymentHistoryChart payrollChart = null!;
         private PayrollSummaryChart summaryChart = null!;
+        private ComboBox payrollPeriodCombo = null!;
+        private DashboardData? loadedDashboardData;
         private DataGridView employeeGrid = null!;
         private RoundedPanel employeeSection = null!;
         private Label employeeCountLabel = null!;
@@ -228,7 +230,13 @@ namespace PAYROLL
             GridStyle.Apply(employeeGrid);
             employeeGrid.CellPainting += GridStyle.PaintStatusBadges; // activates if a Status column exists
             employeeGrid.DataError += (s, e) => { e.ThrowException = false; };
-            employeeGrid.CellDoubleClick += (s, e) => { if (e.RowIndex >= 0) Navigate("employee"); };
+            employeeGrid.CellFormatting += EmployeeGrid_CellFormatting;
+            employeeGrid.CellDoubleClick += (s, e) =>
+            {
+                if (e.RowIndex < 0 || employeeGrid.Rows[e.RowIndex].DataBoundItem is not DataRowView row)
+                    return;
+                NavigateToEmployee(Convert.ToInt32(row["EmployeeID"]));
+            };
 
             employeeSection.Controls.Add(employeeGrid);
             employeeSection.Controls.Add(empTitle);
@@ -243,14 +251,34 @@ namespace PAYROLL
             analytics.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 58f));
             analytics.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42f));
 
-            payrollChart = new PaymentHistoryChart
+            var trendPanel = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg, Margin = new Padding(0, 0, 10, 0) };
+            var trendToolbar = new Panel { Dock = DockStyle.Top, Height = 36, BackColor = Theme.Bg };
+            var trendLabel = new Label
             {
-                Dock = DockStyle.Fill, Margin = new Padding(0, 0, 10, 0),
-                Title = "Payroll by Position" // real data — see DashboardData
+                Text = "View", Location = new Point(4, 8), Size = new Size(42, 22),
+                Font = Theme.SmallBold, ForeColor = Theme.TextGray, BackColor = Theme.Bg
             };
-            summaryChart = new PayrollSummaryChart { Dock = DockStyle.Fill, Margin = new Padding(0) };
+            payrollPeriodCombo = new ComboBox
+            {
+                Location = new Point(48, 4), Width = 150, Height = 28,
+                DropDownStyle = ComboBoxStyle.DropDownList, Font = Theme.Small
+            };
+            payrollPeriodCombo.Items.AddRange(new object[] { "By cutoff", "By month", "By year" });
+            payrollPeriodCombo.SelectedIndex = 1; // Monthly is the most useful company-wide default.
+            trendToolbar.Controls.Add(trendLabel);
+            trendToolbar.Controls.Add(payrollPeriodCombo);
 
-            analytics.Controls.Add(payrollChart, 0, 0);
+            payrollChart = new PaymentHistoryChart { Dock = DockStyle.Fill, Title = "Net Payroll by Month" };
+            trendPanel.Controls.Add(payrollChart);
+            trendPanel.Controls.Add(trendToolbar);
+            payrollPeriodCombo.SelectedIndexChanged += (s, e) => UpdatePayrollTrend();
+
+            summaryChart = new PayrollSummaryChart
+            {
+                Dock = DockStyle.Fill, Margin = new Padding(0), Title = "Latest Payroll by Department"
+            };
+
+            analytics.Controls.Add(trendPanel, 0, 0);
             analytics.Controls.Add(summaryChart, 1, 0);
 
             // --- top row: three summary cards ---
@@ -265,25 +293,25 @@ namespace PAYROLL
 
             dateCard = new DashboardCard
             {
-                Dock = DockStyle.Fill, Icon = IconKind.Calendar, ShowMiniBars = true,
+                Dock = DockStyle.Fill, Icon = IconKind.Users,
                 Margin = new Padding(0, 0, 10, 0), ValueFont = new Font("Segoe UI Semibold", 14f)
             };
-            dateCard.Title = "Upcoming Salary Date";
-            dateCard.Value = "--";   // honest: no pay-date column exists in Employees
-            dateCard.Sub = " ";
+            dateCard.Title = "Employees";
+            dateCard.Value = "0";
+            dateCard.Sub = "Active employees";
 
             netPayCard = new DashboardCard
             {
                 Dock = DockStyle.Fill, Icon = IconKind.Card,
                 Margin = new Padding(0, 0, 10, 0), ValueFont = new Font("Segoe UI Semibold", 17f)
             };
-            netPayCard.Title = "Total Net Pay";
+            netPayCard.Title = "Latest Net Pay";
 
             grossPayCard = new DashboardCard
             {
                 Dock = DockStyle.Fill, Icon = IconKind.Bank, ValueFont = new Font("Segoe UI Semibold", 16f)
             };
-            grossPayCard.Title = "Total Gross Pay";
+            grossPayCard.Title = "Latest Gross Pay";
 
             topRow.Controls.Add(dateCard, 0, 0);
             topRow.Controls.Add(netPayCard, 1, 0);
@@ -339,7 +367,17 @@ namespace PAYROLL
         // Embed the employee management screen in the dashboard content area.
         private void ShowEmployee()
         {
-            if (hostedEmployeeForm != null) return; // already open — keeps typed input
+            ShowEmployee(null);
+        }
+
+        private void ShowEmployee(int? employeeId)
+        {
+            if (hostedEmployeeForm != null)
+            {
+                if (employeeId.HasValue && hostedEmployeeForm is EmployeeManagementForm employeeForm)
+                    employeeForm.FocusEmployee(employeeId.Value);
+                return; // already open — keeps typed input unless a dashboard row was chosen
+            }
             if (ticketsContent != null) ticketsContent.Visible = false;
             if (payslipsContent != null) payslipsContent.Visible = false;
             if (companyContent != null) companyContent.Visible = false;
@@ -354,6 +392,18 @@ namespace PAYROLL
             };
             contentHost.Controls.Add(hostedEmployeeForm);
             hostedEmployeeForm.Show();
+            if (employeeId.HasValue && hostedEmployeeForm is EmployeeManagementForm openedEmployeeForm)
+                openedEmployeeForm.FocusEmployee(employeeId.Value);
+        }
+
+        private void NavigateToEmployee(int employeeId)
+        {
+            foreach (var button in navButtons)
+            {
+                button.Active = (string?)button.Tag == "employee";
+                button.Invalidate();
+            }
+            ShowEmployee(employeeId);
         }
 
         // ------------------------------------------------------------------
@@ -631,7 +681,7 @@ namespace PAYROLL
                 var hint = new Panel { Dock = DockStyle.Top, Height = 40, BackColor = Theme.Bg };
                 var hintLabel = new Label
                 {
-                    Text = "This is payslip history. To generate a new payslip, open the Employee screen and select an employee.",
+                    Text = "Management history shows payslips generated during the current company cutoff window. Older records remain stored for payroll reference. To generate a payslip, open the Employee screen and select an employee.",
                     Font = Theme.Small, ForeColor = Theme.TextGray, AutoSize = true, Location = new Point(0, 8), BackColor = Theme.Bg
                 };
                 hint.Controls.Add(hintLabel);
@@ -692,6 +742,7 @@ namespace PAYROLL
                 var result = await Task.Run(() => PayrollScheduleService.ReleaseDuePayslips());
                 if (result.PayslipsCreated > 0)
                 {
+                    RefreshData();
                     if (payslipsContent?.Visible == true) RefreshPayslips();
                     MessageBox.Show(this,
                         $"Automatically released {result.PayslipsCreated} payslip(s). They are now available in the Payslips history and employee accounts.",
@@ -895,20 +946,21 @@ namespace PAYROLL
             catch
             {
                 d = new DashboardData();
-                d.Unavailable.Add("SQL Server connection failed");
+                d.Unavailable.Add("database connection failed");
             }
 
-            dateCard.Value = d.NextPayDate;     // "--" until a pay-date column exists
-            dateCard.Sub = d.NextPayNote;
+            loadedDashboardData = d;
+            dateCard.Value = d.TotalEmployees.ToString("N0");
+            dateCard.Sub = "Active employees";
 
             netPayCard.Value = Theme.Money(d.TotalNetPay);
-            netPayCard.Sub = d.TotalEmployees.ToString("N0") + " employees";
+            netPayCard.Sub = "Across active employees";
 
             grossPayCard.Value = Theme.Money(d.TotalGrossPay);
             grossPayCard.Sub = "incl. " + Theme.Money(d.TotalOvertimePay) + " overtime";
 
-            payrollChart.SetData(d.PayByPosition, Theme.Money(d.TotalNetPay));
-            summaryChart.SetData(d.Summary);
+            UpdatePayrollTrend();
+            summaryChart.SetData(d.PayByDepartment);
 
             employeeCountLabel.Text = d.TotalEmployees.ToString("N0") + " employees";
             employeeCountLabel.Location = new Point(employeeSection.Width - employeeCountLabel.Width - 26, 24);
@@ -929,6 +981,31 @@ namespace PAYROLL
             }
         }
 
+        private void UpdatePayrollTrend()
+        {
+            if (payrollChart == null || loadedDashboardData == null) return;
+            string view = payrollPeriodCombo?.SelectedItem?.ToString() ?? "By month";
+            List<PayrollTrendPoint> points;
+            if (view == "By cutoff")
+            {
+                points = loadedDashboardData.PayrollByCutoff;
+                payrollChart.Title = "Net Payroll by Cutoff";
+            }
+            else if (view == "By year")
+            {
+                points = loadedDashboardData.PayrollByYear;
+                payrollChart.Title = "Net Payroll by Year";
+            }
+            else
+            {
+                points = loadedDashboardData.PayrollByMonth;
+                payrollChart.Title = "Net Payroll by Month";
+            }
+
+            var chartRows = points.Select(point => (point.Label, point.Total)).ToList();
+            payrollChart.SetData(chartRows, Theme.Money(points.Sum(point => point.Total)));
+        }
+
         private void FormatGridColumns()
         {
             employeeGrid.ReadOnly = true; // editing stays inside EmployeeManagementForm
@@ -945,24 +1022,19 @@ namespace PAYROLL
                 else if (n.Contains("position")) col.FillWeight = 110;
             }
 
-            // DataGridView applies AlternatingRowsDefaultCellStyle with HIGHER
-            // priority than Column.DefaultCellStyle. That style (set in
-            // GridStyle.Apply) has no alignment/format of its own, so every
-            // other row was falling back to plain left-aligned text — that's
-            // the "not straight in one line" staggering. Setting the style on
-            // each individual cell wins over every other style level, so every
-            // row lines up the same way regardless of odd/even banding.
-            foreach (DataGridViewRow row in employeeGrid.Rows)
+        }
+
+        private void EmployeeGrid_CellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
+        {
+            if (e.RowIndex < 0 || e.ColumnIndex < 0 || e.ColumnIndex >= employeeGrid.Columns.Count)
+                return;
+
+            DataGridViewColumn column = employeeGrid.Columns[e.ColumnIndex];
+            string name = (column.DataPropertyName + " " + column.Name).ToLowerInvariant();
+            if (name.Contains("salary") || name.Contains("grosspay") || name.Contains("netpay"))
             {
-                foreach (DataGridViewColumn col in employeeGrid.Columns)
-                {
-                    string n = col.Name.ToLowerInvariant();
-                    if (n.Contains("salary") || n.Contains("pay"))
-                    {
-                        row.Cells[col.Index].Style.Alignment = DataGridViewContentAlignment.MiddleRight;
-                        row.Cells[col.Index].Style.Format = Theme.Currency + "#,##0.00";
-                    }
-                }
+                e.CellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
+                e.CellStyle.Format = Theme.Currency + "#,##0.00";
             }
         }
 

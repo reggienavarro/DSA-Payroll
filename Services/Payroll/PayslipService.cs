@@ -9,6 +9,7 @@ namespace PAYROLL
         public static void Create(Payslip p)
         {
             CompanyService.EnsureDepartmentSchema();
+            CompanyService.EnsurePayslipSchema();
             CompanyService.EnsureBenefitsSchema();
             using var con = new MySqlConnection(AppConfig.ConnectionString);
             con.Open();
@@ -103,7 +104,9 @@ namespace PAYROLL
         public static List<Payslip> LoadAll()
         {
             CompanyService.EnsureDepartmentSchema();
+            CompanyService.EnsurePayslipSchema();
             CompanyService.EnsureBenefitsSchema();
+            DateTime visibilityStart = PayrollScheduleService.GetAdminPayslipVisibilityStart();
             var list = new List<Payslip>();
             using var con = new MySqlConnection(AppConfig.ConnectionString);
             using var cmd = new MySqlCommand(@"
@@ -112,8 +115,9 @@ namespace PAYROLL
                 FROM Payslips ps
                 JOIN Employees e ON e.EmployeeID = ps.EmployeeID
                 LEFT JOIN Departments d ON d.DepartmentID = e.DepartmentID
-                WHERE ps.CreatedAt >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+                WHERE ps.CreatedAt >= @VisibilityStart
                 ORDER BY COALESCE(d.DepartmentName, 'Unassigned'), e.EmployeeName, ps.CutoffEnd DESC", con);
+            cmd.Parameters.AddWithValue("@VisibilityStart", visibilityStart);
             con.Open();
             using var reader = cmd.ExecuteReader();
             while (reader.Read())
@@ -124,6 +128,7 @@ namespace PAYROLL
 
         public static List<Payslip> LoadForEmployee(int employeeId)
         {
+            CompanyService.EnsurePayslipSchema();
             CompanyService.EnsureBenefitsSchema();
             var list = new List<Payslip>();
             using var con = new MySqlConnection(AppConfig.ConnectionString);
@@ -133,7 +138,7 @@ namespace PAYROLL
                 FROM Payslips ps
                 JOIN Employees e ON e.EmployeeID = ps.EmployeeID
                 LEFT JOIN Departments d ON d.DepartmentID = e.DepartmentID
-                WHERE ps.EmployeeID = @EmployeeID
+                WHERE ps.EmployeeID = @EmployeeID AND e.IsActive = 1
                 ORDER BY ps.CreatedAt DESC", con);
             cmd.Parameters.AddWithValue("@EmployeeID", employeeId);
             con.Open();
@@ -146,25 +151,9 @@ namespace PAYROLL
 
         public static List<Payslip> LoadRecentForEmployee(int employeeId)
         {
-            CompanyService.EnsureBenefitsSchema();
-            var list = new List<Payslip>();
-            using var con = new MySqlConnection(AppConfig.ConnectionString);
-            using var cmd = new MySqlCommand(@"
-                SELECT ps.*, e.EmployeeName,
-                       COALESCE(d.DepartmentName, 'Unassigned') AS DepartmentName
-                FROM Payslips ps
-                JOIN Employees e ON e.EmployeeID = ps.EmployeeID
-                LEFT JOIN Departments d ON d.DepartmentID = e.DepartmentID
-                WHERE ps.EmployeeID = @EmployeeID
-                  AND ps.CreatedAt >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-                ORDER BY ps.CutoffEnd DESC, ps.CreatedAt DESC", con);
-            cmd.Parameters.AddWithValue("@EmployeeID", employeeId);
-            con.Open();
-            using (var reader = cmd.ExecuteReader())
-                while (reader.Read())
-                    list.Add(Map(reader));
-            LoadBenefitItems(list);
-            return list;
+            // Retained as a compatibility wrapper for any older callers. Employee
+            // payslip history is no longer limited to the most recent 30 days.
+            return LoadForEmployee(employeeId);
         }
 
         private static void LoadBenefitItems(List<Payslip> payslips)

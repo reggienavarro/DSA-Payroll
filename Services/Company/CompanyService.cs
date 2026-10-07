@@ -66,6 +66,74 @@ namespace PAYROLL
                 SeedBenefitsFromLegacyDefaults(con);
         }
 
+        // Payslips existed before the newer benefit and payroll-period features.
+        // Keep older student-project databases compatible by adding only columns
+        // that are missing; existing payslip rows are preserved.
+        public static void EnsurePayslipSchema()
+        {
+            using var con = new MySqlConnection(AppConfig.ConnectionString);
+            con.Open();
+            using (var table = new MySqlCommand(@"
+                CREATE TABLE IF NOT EXISTS Payslips (
+                    PayslipID INT AUTO_INCREMENT PRIMARY KEY,
+                    EmployeeID INT NOT NULL,
+                    CutoffStart DATE NOT NULL,
+                    CutoffEnd DATE NOT NULL,
+                    NoOfDays DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    HourlyRate DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    BasicPay DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    NdPayPrem DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    RiceAllowance DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    DailyMeal DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    Uniform DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    Laundry DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    TotalOtPay DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    RegHolPayPrem DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    SpHolPayPrem DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    LeaveWithPay DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    Adjustment DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    Absences DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    LateUtOb DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    SssContribution DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    PhilHealthContribution DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    HmdfContribution DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    Loans DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    AttendanceBonus DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    TenureBonus DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    Oic DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    Account DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    Incentives DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    InternalCommission DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    CreatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )", con))
+                table.ExecuteNonQuery();
+
+            EnsurePayslipColumn(con, "DailyMeal", "DECIMAL(12,2) NOT NULL DEFAULT 0");
+            EnsurePayslipColumn(con, "NdPayPrem", "DECIMAL(12,2) NOT NULL DEFAULT 0");
+            EnsurePayslipColumn(con, "RiceAllowance", "DECIMAL(12,2) NOT NULL DEFAULT 0");
+            EnsurePayslipColumn(con, "Uniform", "DECIMAL(12,2) NOT NULL DEFAULT 0");
+            EnsurePayslipColumn(con, "Laundry", "DECIMAL(12,2) NOT NULL DEFAULT 0");
+            EnsurePayslipColumn(con, "AttendanceBonus", "DECIMAL(12,2) NOT NULL DEFAULT 0");
+            EnsurePayslipColumn(con, "TenureBonus", "DECIMAL(12,2) NOT NULL DEFAULT 0");
+            EnsurePayslipColumn(con, "Oic", "DECIMAL(12,2) NOT NULL DEFAULT 0");
+            EnsurePayslipColumn(con, "Account", "DECIMAL(12,2) NOT NULL DEFAULT 0");
+            EnsurePayslipColumn(con, "Incentives", "DECIMAL(12,2) NOT NULL DEFAULT 0");
+            EnsurePayslipColumn(con, "InternalCommission", "DECIMAL(12,2) NOT NULL DEFAULT 0");
+            EnsurePayslipColumn(con, "CreatedAt", "TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP");
+        }
+
+        private static void EnsurePayslipColumn(MySqlConnection con, string column, string definition)
+        {
+            using var check = new MySqlCommand(@"
+                SELECT COUNT(*) FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='Payslips' AND COLUMN_NAME=@Column", con);
+            check.Parameters.AddWithValue("@Column", column);
+            if (Convert.ToInt32(check.ExecuteScalar()) != 0) return;
+
+            using var alter = new MySqlCommand($"ALTER TABLE Payslips ADD COLUMN {column} {definition}", con);
+            alter.ExecuteNonQuery();
+        }
+
         private static void SeedBenefitsFromLegacyDefaults(MySqlConnection con)
         {
             var values = new List<(string Name, decimal Amount)>();

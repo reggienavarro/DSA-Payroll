@@ -31,14 +31,25 @@ namespace PAYROLL.UI
         private static Color ColorFor(string label)
         {
             string s = (label ?? "").ToLowerInvariant();
-            // future support if you ever add a Status column:
             if (s.Contains("unpaid") || s.Contains("overdue") || s.Contains("fail")) return Color.FromArgb(239, 68, 68);
             if (s.Contains("paid"))  return Theme.Accent;
             if (s.Contains("pend"))  return Theme.Amber;
-            // the three real slices used today:
             if (s.Contains("net"))      return Theme.Accent;   
             if (s.Contains("overtime")) return Theme.Amber;    
-            return Color.FromArgb(148, 163, 184);              
+
+            // Give department slices distinct, repeatable colors across refreshes.
+            Color[] departmentColors =
+            {
+                Theme.Accent,
+                Color.FromArgb(16, 185, 129),
+                Color.FromArgb(245, 158, 11),
+                Color.FromArgb(139, 92, 246),
+                Color.FromArgb(236, 72, 153),
+                Color.FromArgb(20, 184, 166)
+            };
+            int hash = 0;
+            foreach (char character in s) hash = (hash * 31 + character) & 0x7fffffff;
+            return departmentColors[hash % departmentColors.Length];
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -98,7 +109,10 @@ namespace PAYROLL.UI
             foreach (var s in slices)
             {
                 using (var b = new SolidBrush(s.Color)) g.FillEllipse(b, lx, ly + 5, 10, 10);
-                TextRenderer.DrawText(g, s.Label, Theme.BodyBold, new Point(lx + 20, ly - 2), Theme.TextDark);
+                int labelWidth = Math.Max(40, Width - lx - 32);
+                TextRenderer.DrawText(g, s.Label, Theme.BodyBold,
+                    new Rectangle(lx + 20, ly - 2, labelWidth, 20), Theme.TextDark,
+                    TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
                 string detail = Theme.Money(s.Value) +
                                 (total > 0 ? "  ·  " + (int)Math.Round(100 * (double)(s.Value / total)) + "%" : "");
                 TextRenderer.DrawText(g, detail, Theme.Small, new Point(lx + 20, ly + 18), Theme.TextGray);

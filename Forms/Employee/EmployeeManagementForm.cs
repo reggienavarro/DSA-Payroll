@@ -324,6 +324,29 @@ namespace PAYROLL
             }
         }
 
+        public void FocusEmployee(int employeeId)
+        {
+            if (searchBox != null && searchBox.Text.Length > 0)
+                searchBox.Clear();
+            else
+                ApplyEmployeeSearch();
+
+            foreach (DataGridViewRow gridRow in dgvPayroll.Rows)
+            {
+                if (gridRow.DataBoundItem is not DataRowView row ||
+                    Convert.ToInt32(row["EmployeeID"]) != employeeId)
+                    continue;
+
+                dgvPayroll.ClearSelection();
+                gridRow.Selected = true;
+                dgvPayroll.CurrentCell = gridRow.Cells[0];
+                if (gridRow.Index >= 0 && gridRow.Index < dgvPayroll.RowCount)
+                    dgvPayroll.FirstDisplayedScrollingRowIndex = gridRow.Index;
+                PopulateEmployeeForm(row);
+                return;
+            }
+        }
+
         private void ApplyEmployeeSearch()
         {
             if (employeeView == null) return;

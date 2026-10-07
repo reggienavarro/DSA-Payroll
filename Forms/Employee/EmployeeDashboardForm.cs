@@ -348,7 +348,7 @@ namespace PAYROLL
             var panel = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg };
             var title = new Label
             {
-                Text = "Payslips from the last 30 days",
+                Text = "My payslip history",
                 Font = Theme.H2,
                 ForeColor = Theme.TextDark,
                 Dock = DockStyle.Top,
@@ -385,7 +385,7 @@ namespace PAYROLL
             table.Columns.Add("Receivable");
             try
             {
-                visiblePayslips = PayslipService.LoadRecentForEmployee(employeeId);
+                visiblePayslips = PayslipService.LoadForEmployee(employeeId);
                 foreach (var payslip in visiblePayslips)
                     table.Rows.Add(payslip.PayslipId,
                         $"{payslip.CutoffStart:MMM d} - {payslip.CutoffEnd:MMM d, yyyy}",
@@ -394,7 +394,7 @@ namespace PAYROLL
                         Theme.Money(payslip.TotalAmountReceivable));
                 myPayslipsGrid.DataSource = table;
                 if (visiblePayslips.Count == 0)
-                    hint.Text = "No payslips have been generated for your account in the last 30 days. Please contact management if you expected one.";
+                    hint.Text = "No payslips are available for your account yet. Payslips remain in your history while your employee account is active.";
             }
             catch (Exception ex)
             {

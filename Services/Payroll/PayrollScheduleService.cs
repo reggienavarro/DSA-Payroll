@@ -52,6 +52,23 @@ namespace PAYROLL
             };
         }
 
+        /// <summary>
+        /// Returns the start of the company's current payroll window. Management's
+        /// payslip list uses this as a visibility boundary; it does not delete older slips.
+        /// </summary>
+        public static DateTime GetAdminPayslipVisibilityStart(DateTime? asOfDate = null)
+        {
+            int periodDays = GetPolicy().PeriodDays;
+            DateTime date = (asOfDate ?? DateTime.Today).Date;
+            return periodDays switch
+            {
+                7 => date.AddDays(-(((int)date.DayOfWeek + 6) % 7)),
+                15 => new DateTime(date.Year, date.Month, date.Day <= 15 ? 1 : 16),
+                30 => new DateTime(date.Year, date.Month, 1),
+                _ => throw new InvalidOperationException("The company payroll frequency must be 7, 15, or 30 days.")
+            };
+        }
+
         public static void SavePolicy(int periodDays)
         {
             if (periodDays is not (7 or 15 or 30))
@@ -78,6 +95,7 @@ namespace PAYROLL
             if (periods.Count == 0) return result;
 
             CompanyService.EnsureDepartmentSchema();
+            CompanyService.EnsurePayslipSchema();
             CompanyService.EnsureBenefitsSchema();
             List<PayrollEmployee> employees = LoadActiveEmployees();
             List<CompanyBenefit> benefits = CompanyService.ListBenefits();
