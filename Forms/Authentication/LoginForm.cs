@@ -97,25 +97,38 @@ namespace PAYROLL
             };
             btnLogin.Click += BtnLogin_Click;
 
-            var registerRow = new Label
+            var registerRow = new FlowLayoutPanel
+            {
+                Location = new Point(0, 332),
+                Size = new Size(360, 28),
+                AutoSize = false,
+                BackColor = Color.White,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                Margin = Padding.Empty,
+                Padding = Padding.Empty
+            };
+            var registerPrompt = new Label
             {
                 Text = "Don't have an account?",
                 Font = Theme.Body,
                 ForeColor = Theme.TextGray,
                 AutoSize = true,
-                Location = new Point(0, 332),
-                BackColor = Color.White
+                BackColor = Color.White,
+                Margin = Padding.Empty,
+                Padding = Padding.Empty
             };
             var registerLink = new LinkLabel
             {
                 Text = "Create one",
                 Font = Theme.BodyBold,
                 AutoSize = true,
-                Location = new Point(registerRow.Right + 6, 332),
                 BackColor = Color.White,
                 LinkColor = Theme.Accent,
                 ActiveLinkColor = Theme.AccentDark,
-                LinkBehavior = LinkBehavior.HoverUnderline
+                LinkBehavior = LinkBehavior.HoverUnderline,
+                Margin = new Padding(6, 0, 0, 0),
+                Padding = Padding.Empty
             };
             registerLink.Click += (s, e) =>
             {
@@ -129,8 +142,9 @@ namespace PAYROLL
             loginCard.Controls.Add(passField);
             loginCard.Controls.Add(errorLabel);
             loginCard.Controls.Add(btnLogin);
+            registerRow.Controls.Add(registerPrompt);
+            registerRow.Controls.Add(registerLink);
             loginCard.Controls.Add(registerRow);
-            loginCard.Controls.Add(registerLink);
 
             rightPanel.Controls.Add(loginCard);
             rightPanel.Resize += (s, e) => CenterCard();

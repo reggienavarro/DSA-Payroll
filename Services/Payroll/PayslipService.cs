@@ -13,6 +13,12 @@ namespace PAYROLL
             using var con = new MySqlConnection(AppConfig.ConnectionString);
             con.Open();
             using var transaction = con.BeginTransaction();
+            CreateInTransaction(con, transaction, p);
+            transaction.Commit();
+        }
+
+        internal static int CreateInTransaction(MySqlConnection con, MySqlTransaction transaction, Payslip p)
+        {
             using var cmd = new MySqlCommand(@"
                 INSERT INTO Payslips
                 (EmployeeID, CutoffStart, CutoffEnd, NoOfDays, HourlyRate, BasicPay,
@@ -26,6 +32,17 @@ namespace PAYROLL
                  @RegHolPayPrem, @SpHolPayPrem, @LeaveWithPay, @Adjustment,
                  @Absences, @LateUtOb, @SssContribution, @PhilHealthContribution, @HmdfContribution, @Loans,
                  @AttendanceBonus, @TenureBonus, @Oic, @Account, @Incentives, @InternalCommission)", con, transaction);
+
+            using (var duplicate = new MySqlCommand(@"SELECT PayslipID FROM Payslips
+                WHERE EmployeeID=@EmployeeID AND CutoffStart=@CutoffStart AND CutoffEnd=@CutoffEnd
+                ORDER BY PayslipID LIMIT 1", con, transaction))
+            {
+                duplicate.Parameters.AddWithValue("@EmployeeID", p.EmployeeId);
+                duplicate.Parameters.AddWithValue("@CutoffStart", p.CutoffStart.Date);
+                duplicate.Parameters.AddWithValue("@CutoffEnd", p.CutoffEnd.Date);
+                if (duplicate.ExecuteScalar() is not null)
+                    throw new InvalidOperationException("A payslip already exists for this employee and cutoff period.");
+            }
 
             cmd.Parameters.AddWithValue("@EmployeeID", p.EmployeeId);
             cmd.Parameters.AddWithValue("@CutoffStart", p.CutoffStart);
@@ -80,8 +97,7 @@ namespace PAYROLL
             updateEmployee.Parameters.AddWithValue("@NetPay", p.NetPay);
             updateEmployee.Parameters.AddWithValue("@EmployeeID", p.EmployeeId);
             updateEmployee.ExecuteNonQuery();
-
-            transaction.Commit();
+            return payslipId;
         }
 
         public static List<Payslip> LoadAll()

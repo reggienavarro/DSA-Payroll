@@ -10,6 +10,7 @@ namespace PAYROLL
     public partial class EmployeeManagementForm : Form
     {
         private readonly string connectionString = AppConfig.ConnectionString;
+        private readonly string currentUser;
         private ComboBox departmentCombo = null!;
         private DateTimePicker hireDatePicker = null!;
         private CheckBox activeCheck = null!;
@@ -17,8 +18,9 @@ namespace PAYROLL
         private DataView employeeView = null!;
         private int? selectedEmployeeId;
 
-        public EmployeeManagementForm()
+        public EmployeeManagementForm(string currentUser = "Admin")
         {
+            this.currentUser = string.IsNullOrWhiteSpace(currentUser) ? "Admin" : currentUser;
             InitializeComponent();
             CompanyService.EnsureDepartmentSchema();
             BuildEmployeeManagementUi();
@@ -291,10 +293,17 @@ namespace PAYROLL
                            COALESCE(d.DepartmentName, 'Unassigned') AS DepartmentName,
                            e.HireDate, e.IsActive,
                            CASE WHEN e.IsActive = 1 THEN 'Active' ELSE 'Inactive' END AS EmploymentStatus,
-                           CASE WHEN EXISTS (SELECT 1 FROM Accounts a WHERE a.EmployeeID = e.EmployeeID)
-                                THEN 'Registered' ELSE 'No account yet' END AS AccountStatus
+                           CASE WHEN accountInfo.EmployeeID IS NULL THEN 'No account yet'
+                                WHEN accountInfo.Role = 'Admin' THEN 'Admin account'
+                                ELSE 'Registered' END AS AccountStatus,
+                           COALESCE(accountInfo.Role, '') AS AccountRole
                     FROM Employees e
                     LEFT JOIN Departments d ON d.DepartmentID = e.DepartmentID
+                    LEFT JOIN (
+                        SELECT EmployeeID, MIN(Role) AS Role
+                        FROM Accounts
+                        GROUP BY EmployeeID
+                    ) accountInfo ON accountInfo.EmployeeID = e.EmployeeID
                     ORDER BY e.EmployeeName", connection);
                 var table = new DataTable();
                 adapter.Fill(table);
@@ -321,7 +330,8 @@ namespace PAYROLL
             string value = searchBox.Text.Trim().Replace("'", "''").Replace("[", "[[]").Replace("%", "[%]").Replace("*", "[*]");
             employeeView.RowFilter = value.Length == 0 ? string.Empty :
                 $"Convert(EmployeeID, 'System.String') LIKE '%{value}%' OR EmployeeName LIKE '%{value}%' OR " +
-                $"Position LIKE '%{value}%' OR DepartmentName LIKE '%{value}%' OR EmploymentStatus LIKE '%{value}%' OR AccountStatus LIKE '%{value}%'";
+                $"Position LIKE '%{value}%' OR DepartmentName LIKE '%{value}%' OR EmploymentStatus LIKE '%{value}%' OR " +
+                $"AccountStatus LIKE '%{value}%' OR AccountRole LIKE '%{value}%'";
         }
 
         private void EmployeeGrid_CellClick(object? sender, DataGridViewCellEventArgs e)
@@ -334,14 +344,108 @@ namespace PAYROLL
 
         private void EmployeeGrid_ActionClick(object? sender, DataGridViewCellEventArgs e)
         {
-            if (e.RowIndex < 0 || dgvPayroll.Columns[e.ColumnIndex].Name != "Actions") return;
+            if (e.RowIndex < 0 || e.ColumnIndex < 0 || e.ColumnIndex >= dgvPayroll.Columns.Count ||
+                dgvPayroll.Columns[e.ColumnIndex].Name != "Actions") return;
             if (dgvPayroll.Rows[e.RowIndex].DataBoundItem is not DataRowView row) return;
             int employeeId = Convert.ToInt32(row["EmployeeID"]);
+            string employeeName = row["EmployeeName"]?.ToString() ?? "this employee";
+            bool canPromote = Convert.ToBoolean(row["IsActive"]) &&
+                string.Equals(row["AccountRole"]?.ToString(), "Employee", StringComparison.OrdinalIgnoreCase);
             var menu = new ContextMenuStrip();
             menu.Items.Add("Generate payslip", null, (s, args) => GeneratePayslip(employeeId));
+            var promoteItem = menu.Items.Add("Promote account to Admin", null,
+                (s, args) => PromoteEmployeeToAdmin(employeeId, employeeName));
+            promoteItem.Enabled = canPromote;
+            promoteItem.ToolTipText = canPromote
+                ? "Requires the owner passcode."
+                : "Only active employees with a registered Employee account can be promoted.";
             menu.Items.Add("Delete employee", null, (s, args) => DeleteEmployee(employeeId));
             var cell = dgvPayroll.GetCellDisplayRectangle(e.ColumnIndex, e.RowIndex, true);
             menu.Show(dgvPayroll, new Point(cell.Right, cell.Bottom));
+        }
+
+        private void PromoteEmployeeToAdmin(int employeeId, string employeeName)
+        {
+            try
+            {
+                bool passcodeJustConfigured = false;
+                if (!OwnerPasscodeService.IsConfigured(connectionString))
+                {
+                    passcodeJustConfigured = OwnerPasscodeDialog.Configure(
+                        this,
+                        employeeName,
+                        currentUser,
+                        passcode => OwnerPasscodeService.Configure(connectionString, passcode, currentUser));
+                    if (!passcodeJustConfigured) return;
+                }
+                else
+                {
+                    if (OwnerPasscodeService.IsLockedOut(connectionString))
+                    {
+                        MessageBox.Show(this, "Owner verification is temporarily locked after repeated incorrect passcodes. Please wait before trying again.",
+                            "Owner verification locked", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
+                    if (!OwnerPasscodeDialog.Verify(this, employeeName,
+                        passcode => OwnerPasscodeService.Verify(connectionString, passcode))) return;
+                }
+
+                using var connection = new MySqlConnection(connectionString);
+                connection.Open();
+                using var transaction = connection.BeginTransaction();
+                try
+                {
+                    bool isActive;
+                    using (var employeeCheck = new MySqlCommand(
+                        "SELECT IsActive FROM Employees WHERE EmployeeID=@ID FOR UPDATE", connection, transaction))
+                    {
+                        employeeCheck.Parameters.AddWithValue("@ID", employeeId);
+                        var activeResult = employeeCheck.ExecuteScalar();
+                        if (activeResult is null || activeResult is DBNull)
+                            throw new InvalidOperationException("This employee no longer exists.");
+                        isActive = Convert.ToBoolean(activeResult);
+                    }
+                    if (!isActive)
+                        throw new InvalidOperationException("Inactive employees cannot be promoted to Admin.");
+
+                    int accountCount;
+                    using (var accountCountCommand = new MySqlCommand(
+                        "SELECT COUNT(*) FROM Accounts WHERE EmployeeID=@ID", connection, transaction))
+                    {
+                        accountCountCommand.Parameters.AddWithValue("@ID", employeeId);
+                        accountCount = Convert.ToInt32(accountCountCommand.ExecuteScalar());
+                    }
+                    if (accountCount != 1)
+                        throw new InvalidOperationException(accountCount == 0
+                            ? "This employee must register an account before being promoted."
+                            : "More than one account is linked to this employee. Resolve the duplicate accounts before promotion.");
+
+                    using (var update = new MySqlCommand(
+                        "UPDATE Accounts SET Role='Admin' WHERE EmployeeID=@ID AND Role='Employee'", connection, transaction))
+                    {
+                        update.Parameters.AddWithValue("@ID", employeeId);
+                        if (update.ExecuteNonQuery() != 1)
+                            throw new InvalidOperationException("The employee account is no longer eligible for promotion.");
+                    }
+
+                    OwnerPasscodeService.AddPromotionAudit(connection, transaction, employeeId, currentUser);
+                    transaction.Commit();
+                }
+                catch
+                {
+                    transaction.Rollback();
+                    throw;
+                }
+
+                MessageBox.Show(this, $"{employeeName} is now an Admin.", "Promotion complete",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                LoadEmployees();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "Could not promote this employee: " + ex.Message, "Admin promotion",
+                    MessageBoxButtons.OK, ex is MySqlException ? MessageBoxIcon.Error : MessageBoxIcon.Warning);
+            }
         }
 
         private static void PaintActionCell(object? sender, DataGridViewCellPaintingEventArgs e)

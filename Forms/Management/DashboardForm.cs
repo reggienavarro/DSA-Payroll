@@ -26,6 +26,8 @@ namespace PAYROLL
         private ProfileChip profileChip = null!;
         private NotificationBell bell = null!;
         private readonly System.Windows.Forms.Timer notificationTimer = new() { Interval = 30000 };
+        private readonly System.Windows.Forms.Timer payrollReleaseTimer = new() { Interval = 300000 };
+        private bool payrollReleaseRunning;
         private (int TicketLow, int TicketMedium, int TicketHigh, int Overtime, int Leave, int Undertime)? announcedNotifications;
         private SidebarButton[] navButtons = Array.Empty<SidebarButton>();
         private SidebarButton? leaveNavigationButton;
@@ -66,9 +68,20 @@ namespace PAYROLL
             Load += (s, e) => RefreshData(); // old form loaded stats on startup too
 
             // Pending management work: update the bell on launch and recheck every 30 seconds.
-            Shown += (s, e) => { RefreshNotifications(); notificationTimer.Start(); };
+            Shown += (s, e) =>
+            {
+                RefreshNotifications();
+                notificationTimer.Start();
+                RunAutomaticPayrollRelease(showErrors: true);
+                payrollReleaseTimer.Start();
+            };
             notificationTimer.Tick += (s, e) => RefreshNotifications();
-            FormClosed += (s, e) => notificationTimer.Dispose();
+            payrollReleaseTimer.Tick += (s, e) => RunAutomaticPayrollRelease(showErrors: false);
+            FormClosed += (s, e) =>
+            {
+                notificationTimer.Dispose();
+                payrollReleaseTimer.Dispose();
+            };
 
             FormClosing += (s, e) =>
             {
@@ -333,7 +346,7 @@ namespace PAYROLL
             if (leaveRequestsContent != null) leaveRequestsContent.Visible = false;
             dashboardContent.Visible = false;
             headerTitle.Text = "Employee Management";
-            hostedEmployeeForm = new EmployeeManagementForm
+            hostedEmployeeForm = new EmployeeManagementForm(CurrentUser)
             {
                 TopLevel = false,
                 FormBorderStyle = FormBorderStyle.None,
@@ -667,6 +680,40 @@ namespace PAYROLL
             {
                 MessageBox.Show("Could not load payslips: " + ex.Message, "Database Error",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private async void RunAutomaticPayrollRelease(bool showErrors)
+        {
+            if (payrollReleaseRunning || IsDisposed) return;
+            payrollReleaseRunning = true;
+            try
+            {
+                var result = await Task.Run(() => PayrollScheduleService.ReleaseDuePayslips());
+                if (result.PayslipsCreated > 0)
+                {
+                    if (payslipsContent?.Visible == true) RefreshPayslips();
+                    MessageBox.Show(this,
+                        $"Automatically released {result.PayslipsCreated} payslip(s). They are now available in the Payslips history and employee accounts.",
+                        "Payroll Release", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                if (showErrors && result.Errors.Count > 0)
+                {
+                    string details = string.Join(Environment.NewLine, result.Errors.Take(5));
+                    if (result.Errors.Count > 5) details += Environment.NewLine + $"…and {result.Errors.Count - 5} more.";
+                    MessageBox.Show(this, "Some automatic payslips could not be released. The system will retry while the app is running or next time it opens.\n\n" + details,
+                        "Automatic Payroll Release", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            }
+            catch (Exception ex)
+            {
+                if (showErrors)
+                    MessageBox.Show(this, "Automatic payroll release could not run: " + ex.Message,
+                        "Automatic Payroll Release", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+            finally
+            {
+                payrollReleaseRunning = false;
             }
         }
 

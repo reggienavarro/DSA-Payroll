@@ -54,6 +54,8 @@ namespace PAYROLL
 
         public static void RecordTimeIn(int employeeId, TimeSpan time)
         {
+            if (ActiveRecord(employeeId) != null)
+                throw new InvalidOperationException("You already have an open attendance record from your current or overnight shift. Record its time-out first.");
             using var con = OpenConnection();
             using var cmd = new MySqlCommand(@"
                 INSERT INTO Attendance (EmployeeID, AttendanceDate, TimeIn, Status)
@@ -68,7 +70,7 @@ namespace PAYROLL
 
         public static void RecordTimeOut(int employeeId, TimeSpan time)
         {
-            var today = TodayRecord(employeeId);
+            var today = ActiveRecord(employeeId);
             string? problem = TimeOutProblem(today, time);
             if (problem != null) throw new InvalidOperationException(problem);
 
@@ -83,7 +85,7 @@ namespace PAYROLL
                     AND TimeIn IS NOT NULL AND Status = 'Present'
                     AND BreakOut IS NOT NULL AND BreakIn IS NOT NULL AND TimeOut IS NULL", con);
             cmd.Parameters.AddWithValue("@EmployeeID", employeeId);
-            cmd.Parameters.AddWithValue("@Date", DateTime.Today);
+            cmd.Parameters.AddWithValue("@Date", today!.AttendanceDate.Date);
             cmd.Parameters.AddWithValue("@Time", time);
             cmd.Parameters.AddWithValue("@UndertimeStatus", undertime > 0 ? (object)"Open" : DBNull.Value);
             if (cmd.ExecuteNonQuery() == 0)
@@ -100,7 +102,12 @@ namespace PAYROLL
                 return "Time-out is already recorded for today.";
             if (today.BreakOut == null || today.BreakIn == null)
                 return "Finish your break first. Record break-out and break-in before you time out.";
-            if (time <= today.BreakIn.Value)
+            int candidateOffset = ForwardDurationMinutes(today.TimeIn.Value, time);
+            int breakInOffset = ForwardDurationMinutes(today.TimeIn.Value, today.BreakOut!.Value)
+                + ForwardDurationMinutes(today.BreakOut.Value, today.BreakIn.Value);
+            if (time == today.TimeIn.Value || candidateOffset >= 24 * 60)
+                return "Time-out must be within 24 hours of your time-in.";
+            if (candidateOffset <= breakInOffset)
                 return $"Time-out must be after your {FormatClock(today.BreakIn.Value)} break-in.";
             return null;
         }
@@ -110,7 +117,7 @@ namespace PAYROLL
         // RecordTimeOut explains why). The screen uses this to warn before an early time-out.
         public static int GetUndertimeMinutes(int employeeId, TimeSpan time)
         {
-            var today = TodayRecord(employeeId);
+            var today = ActiveRecord(employeeId);
             return TimeOutProblem(today, time) != null ? 0 : UndertimeIfTimedOutAt(today!, time);
         }
 
@@ -396,6 +403,21 @@ namespace PAYROLL
 
         private static AttendanceRecord? TodayRecord(int employeeId)
             => ListForDate(DateTime.Today, employeeId).Find(item => item.EmployeeId == employeeId);
+
+        private static AttendanceRecord? ActiveRecord(int employeeId)
+            => ListForRange(DateTime.Today.AddDays(-1), DateTime.Today, employeeId)
+                .Where(item => item.EmployeeId == employeeId && item.Status == "Present"
+                    && item.TimeIn.HasValue && !item.TimeOut.HasValue)
+                .OrderByDescending(item => item.AttendanceDate)
+                .FirstOrDefault();
+
+        private static int ForwardDurationMinutes(TimeSpan start, TimeSpan end)
+        {
+            int minutes = (int)Math.Round((end - start).TotalMinutes, MidpointRounding.AwayFromZero);
+            // A negative clock difference crosses midnight; equal times are zero elapsed minutes.
+            if (minutes < 0) minutes += 24 * 60;
+            return minutes;
+        }
 
         private static string FormatClock(TimeSpan time)
             => DateTime.Today.Add(time).ToString("h:mm tt");

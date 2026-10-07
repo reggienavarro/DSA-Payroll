@@ -19,7 +19,9 @@ namespace PAYROLL
         private readonly int? preselectEmployeeId;
 
         private ComboBox employeeCombo = null!;
+        private ComboBox periodTypeCombo = null!;
         private DateTimePicker cutoffStart = null!, cutoffEnd = null!;
+        private int selectedPeriodDays = 15;
 
         private Label totalValue = null!, totalDeductionsValue = null!, netPayValue = null!,
             totalBonusValue = null!, totalReceivableValue = null!;
@@ -59,6 +61,8 @@ namespace PAYROLL
                 MessageBox.Show("Could not load company benefits: " + ex.Message,
                     "Company Benefits", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
+            try { selectedPeriodDays = PayrollScheduleService.GetPolicy().PeriodDays; }
+            catch { selectedPeriodDays = 15; }
 
             int y = 20;
             BuildHeaderCard(content, ref y, defaults.DefaultHourlyRate);
@@ -127,42 +131,64 @@ namespace PAYROLL
         // ------------------------------------------------------------------
         private void BuildHeaderCard(Panel content, ref int y, decimal defaultHourlyRate)
         {
-            var card = new RoundedPanel { Location = new Point(20, y), Size = new Size(560, 230), SurroundColor = Theme.Bg };
+            var card = new RoundedPanel { Location = new Point(20, y), Size = new Size(560, 286), SurroundColor = Theme.Bg };
 
             var empLabel = new Label { Text = "EMPLOYEE", Font = Theme.SmallBold, ForeColor = Theme.TextGray, AutoSize = true, Location = new Point(16, 14), BackColor = Color.White };
             employeeCombo = new ComboBox { Location = new Point(16, 34), Width = 528, DropDownStyle = ComboBoxStyle.DropDownList };
             employeeCombo.SelectedIndexChanged += (s, e) => OnEmployeeChanged();
 
-            var cutoffLabel = new Label { Text = "CUTOFF PERIOD", Font = Theme.SmallBold, ForeColor = Theme.TextGray, AutoSize = true, Location = new Point(16, 70), BackColor = Color.White };
-            cutoffStart = new DateTimePicker { Location = new Point(16, 90), Width = 256, Format = DateTimePickerFormat.Short };
-            cutoffEnd = new DateTimePicker { Location = new Point(288, 90), Width = 256, Format = DateTimePickerFormat.Short };
-            DateTime today = DateTime.Today;
-            int lastDay = DateTime.DaysInMonth(today.Year, today.Month);
-            cutoffStart.Value = new DateTime(today.Year, today.Month, today.Day <= 15 ? 1 : 16);
-            cutoffEnd.Value = new DateTime(today.Year, today.Month, today.Day <= 15 ? 15 : lastDay);
+            var periodTypeLabel = new Label { Text = "PAY PERIOD TYPE", Font = Theme.SmallBold, ForeColor = Theme.TextGray, AutoSize = true, Location = new Point(16, 70), BackColor = Color.White };
+            periodTypeCombo = new ComboBox
+            {
+                Location = new Point(16, 90), Width = 528, DropDownStyle = ComboBoxStyle.DropDownList,
+                Font = Theme.Body
+            };
+            periodTypeCombo.Items.Add(new PeriodOption(7, "7 days (weekly)"));
+            periodTypeCombo.Items.Add(new PeriodOption(15, "15 days (semi-monthly: 1–15 or 16–end)"));
+            periodTypeCombo.Items.Add(new PeriodOption(30, "1 month (calendar month)"));
+            for (int i = 0; i < periodTypeCombo.Items.Count; i++)
+                if (periodTypeCombo.Items[i] is PeriodOption option && option.Days == selectedPeriodDays)
+                    periodTypeCombo.SelectedIndex = i;
+            if (periodTypeCombo.SelectedIndex < 0) periodTypeCombo.SelectedIndex = 1;
+
+            var cutoffLabel = new Label { Text = "CUTOFF PERIOD", Font = Theme.SmallBold, ForeColor = Theme.TextGray, AutoSize = true, Location = new Point(16, 126), BackColor = Color.White };
+            cutoffStart = new DateTimePicker { Location = new Point(16, 146), Width = 256, Format = DateTimePickerFormat.Short };
+            cutoffEnd = new DateTimePicker { Location = new Point(288, 146), Width = 256, Format = DateTimePickerFormat.Short };
+            SetPeriodDates(DateTime.Today, selectedPeriodDays);
+            periodTypeCombo.SelectedIndexChanged += (s, e) =>
+            {
+                if (periodTypeCombo.SelectedItem is PeriodOption option)
+                {
+                    selectedPeriodDays = option.Days;
+                    SetPeriodDates(DateTime.Today, selectedPeriodDays);
+                    RefreshAttendanceDefaults();
+                }
+            };
             cutoffStart.ValueChanged += (s, e) => RefreshAttendanceDefaults();
             cutoffEnd.ValueChanged += (s, e) => RefreshAttendanceDefaults();
 
-            var daysLabel = new Label { Text = "NO. OF DAYS", Font = Theme.SmallBold, ForeColor = Theme.TextGray, AutoSize = true, Location = new Point(16, 126), BackColor = Color.White };
-            var daysBox = new TextBox { Location = new Point(16, 146), Width = 256, Text = "0", ReadOnly = true };
+            var daysLabel = new Label { Text = "NO. OF DAYS", Font = Theme.SmallBold, ForeColor = Theme.TextGray, AutoSize = true, Location = new Point(16, 182), BackColor = Color.White };
+            var daysBox = new TextBox { Location = new Point(16, 202), Width = 256, Text = "0", ReadOnly = true };
             daysBox.TextChanged += (s, e) => RecomputeBasicPay();
             fields["noOfDays"] = daysBox;
 
-            var rateLabel = new Label { Text = "HOURLY RATE", Font = Theme.SmallBold, ForeColor = Theme.TextGray, AutoSize = true, Location = new Point(288, 126), BackColor = Color.White };
-            var rateBox = new TextBox { Location = new Point(288, 146), Width = 256, Text = defaultHourlyRate.ToString("0.00"), ReadOnly = true };
+            var rateLabel = new Label { Text = "HOURLY RATE", Font = Theme.SmallBold, ForeColor = Theme.TextGray, AutoSize = true, Location = new Point(288, 182), BackColor = Color.White };
+            var rateBox = new TextBox { Location = new Point(288, 202), Width = 256, Text = defaultHourlyRate.ToString("0.00"), ReadOnly = true };
             rateBox.TextChanged += (s, e) => RecomputeBasicPay();
             fields["hourlyRate"] = rateBox;
 
-            var basicPayLabel = new Label { Text = "BASIC PAY  (Hourly Rate × 8 Hours × Recorded Workdays)", Font = Theme.SmallBold, ForeColor = Theme.Accent, AutoSize = true, Location = new Point(16, 182), BackColor = Color.White };
+            var basicPayLabel = new Label { Text = "BASIC PAY  (Hourly Rate × Recorded Hours)", Font = Theme.SmallBold, ForeColor = Theme.Accent, AutoSize = true, Location = new Point(16, 238), BackColor = Color.White };
             var basicPayBox = new TextBox
             {
-                Location = new Point(16, 202), Width = 528, ReadOnly = true, Text = "0.00", TextAlign = HorizontalAlignment.Right,
+                Location = new Point(16, 258), Width = 528, ReadOnly = true, Text = "0.00", TextAlign = HorizontalAlignment.Right,
                 Font = Theme.BodyBold, BackColor = Theme.AccentSoft, BorderStyle = BorderStyle.FixedSingle
             };
             fields["basicPay"] = basicPayBox;
 
             card.Controls.Add(empLabel);
             card.Controls.Add(employeeCombo);
+            card.Controls.Add(periodTypeLabel);
+            card.Controls.Add(periodTypeCombo);
             card.Controls.Add(cutoffLabel);
             card.Controls.Add(cutoffStart);
             card.Controls.Add(cutoffEnd);
@@ -174,7 +200,7 @@ namespace PAYROLL
             card.Controls.Add(basicPayBox);
 
             content.Controls.Add(card);
-            y += 250;
+            y += 306;
         }
 
         private void LoadEmployees()
@@ -247,9 +273,15 @@ namespace PAYROLL
 
                 decimal monthlySalary = DeductionsCalculator.MonthlySalaryFromHourlyRate(hourlyRate);
                 var contributions = DeductionsCalculator.Compute(monthlySalary);
-                fields["sss"].Text = (contributions.sss / 2m).ToString("0.00");
-                fields["philHealth"].Text = (contributions.philHealth / 2m).ToString("0.00");
-                fields["hmdf"].Text = (contributions.pagIbig / 2m).ToString("0.00");
+                decimal contributionShare = selectedPeriodDays switch
+                {
+                    7 => 12m / 52m,
+                    15 => 0.5m,
+                    _ => 1m
+                };
+                fields["sss"].Text = Math.Round(contributions.sss * contributionShare, 2).ToString("0.00");
+                fields["philHealth"].Text = Math.Round(contributions.philHealth * contributionShare, 2).ToString("0.00");
+                fields["hmdf"].Text = Math.Round(contributions.pagIbig * contributionShare, 2).ToString("0.00");
                 RecomputeBasicPay();
             }
             catch (Exception ex)
@@ -447,9 +479,9 @@ namespace PAYROLL
                     "Missing Payroll Data", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
-            if (!IsSemiMonthlyCutoff(cutoffStart.Value.Date, cutoffEnd.Value.Date))
+            if (!IsValidCutoff(selectedPeriodDays, cutoffStart.Value.Date, cutoffEnd.Value.Date))
             {
-                MessageBox.Show("Use a first-half cutoff (1-15) or second-half cutoff (16-last day) within one month.",
+                MessageBox.Show("The selected cutoff dates do not match the chosen pay period type.",
                     "Invalid Cutoff", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
@@ -500,11 +532,44 @@ namespace PAYROLL
             }
         }
 
-        private static bool IsSemiMonthlyCutoff(DateTime start, DateTime end)
+        private static bool IsValidCutoff(int periodDays, DateTime start, DateTime end)
         {
+            if (end < start) return false;
+            if (periodDays == 7) return (end - start).Days == 6;
             if (start.Year != end.Year || start.Month != end.Month) return false;
             int lastDay = DateTime.DaysInMonth(end.Year, end.Month);
-            return start.Day == 1 && end.Day == 15 || start.Day == 16 && end.Day == lastDay;
+            return periodDays == 15
+                ? start.Day == 1 && end.Day == 15 || start.Day == 16 && end.Day == lastDay
+                : start.Day == 1 && end.Day == lastDay;
+        }
+
+        private void SetPeriodDates(DateTime date, int periodDays)
+        {
+            if (periodDays == 7)
+            {
+                int daysSinceMonday = ((int)date.DayOfWeek + 6) % 7;
+                cutoffStart.Value = date.Date.AddDays(-daysSinceMonday);
+                cutoffEnd.Value = cutoffStart.Value.Date.AddDays(6);
+            }
+            else if (periodDays == 15)
+            {
+                int lastDay = DateTime.DaysInMonth(date.Year, date.Month);
+                cutoffStart.Value = new DateTime(date.Year, date.Month, date.Day <= 15 ? 1 : 16);
+                cutoffEnd.Value = new DateTime(date.Year, date.Month, date.Day <= 15 ? 15 : lastDay);
+            }
+            else
+            {
+                cutoffStart.Value = new DateTime(date.Year, date.Month, 1);
+                cutoffEnd.Value = cutoffStart.Value.Date.AddMonths(1).AddDays(-1);
+            }
+        }
+
+        private sealed class PeriodOption
+        {
+            public int Days { get; }
+            private readonly string label;
+            public PeriodOption(int days, string label) { Days = days; this.label = label; }
+            public override string ToString() => label;
         }
 
         private class EmployeeItem

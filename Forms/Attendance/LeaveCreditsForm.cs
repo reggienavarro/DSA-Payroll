@@ -25,7 +25,7 @@ namespace PAYROLL
 
             var header = new Panel { Dock = DockStyle.Top, Height = 92, BackColor = Theme.Bg, Padding = new Padding(18) };
             header.Controls.Add(new Label { Text = "Annual paid-leave credits", Font = Theme.H2, ForeColor = Theme.TextDark, AutoSize = true, Location = new Point(18, 10) });
-            header.Controls.Add(new Label { Text = "Set each employee’s allowance according to the beneficiary’s policy. Pending requests do not use credits; approval does.", Font = Theme.Small, ForeColor = Theme.TextGray, AutoSize = true, Location = new Point(18, 48) });
+            header.Controls.Add(new Label { Text = "Set the leave credits for each employee.", Font = Theme.Small, ForeColor = Theme.TextGray, AutoSize = true, Location = new Point(18, 48) });
 
             var yearBar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 42, Padding = new Padding(18, 5, 0, 0), BackColor = Theme.Bg };
             yearBar.Controls.Add(new Label { Text = "Leave year:", AutoSize = true, Margin = new Padding(0, 7, 6, 0), ForeColor = Theme.TextDark });

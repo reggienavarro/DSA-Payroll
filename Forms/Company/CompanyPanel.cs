@@ -13,6 +13,8 @@ namespace PAYROLL
     public class CompanyPanel : Panel
     {
         private TextBox hourlyRateBox = null!, benefitNameBox = null!, benefitAmountBox = null!;
+        private ComboBox payrollFrequencyCombo = null!;
+        private Label payrollPolicyStatus = null!;
         private DataGridView benefitsGrid = null!;
         private DataGridView calendarEventsGrid = null!;
         private FlowLayoutPanel calendarDepartmentCards = null!;
@@ -32,6 +34,7 @@ namespace PAYROLL
 
             companyTabs = new TabControl { Dock = DockStyle.Fill };
             companyTabs.TabPages.Add(BuildBenefitsTab());
+            companyTabs.TabPages.Add(BuildPayrollPolicyTab());
             companyTabs.TabPages.Add(BuildCalendarTab());
             companyTabs.TabPages.Add(BuildDepartmentsTab());
             Controls.Add(companyTabs);
@@ -46,8 +49,102 @@ namespace PAYROLL
         public void RefreshAll()
         {
             LoadBenefits();
+            LoadPayrollPolicy();
             LoadCalendar();
             LoadDepartments();
+        }
+
+        private TabPage BuildPayrollPolicyTab()
+        {
+            var page = new TabPage("Payroll Release") { BackColor = Theme.Bg, Padding = new Padding(24) };
+            var heading = new Label
+            {
+                Text = "Default payroll release", Font = Theme.H2, ForeColor = Theme.TextDark,
+                Dock = DockStyle.Top, Height = 42, BackColor = Theme.Bg
+            };
+            var explanation = new Label
+            {
+                Text = "Weekly cutoffs run Monday–Sunday; semi-monthly cutoffs run 1–15 and 16–month-end; monthly cutoffs use the calendar month. Payslips release after the cutoff ends. Automatic release checks while management is signed in and catches up next time the app opens.",
+                Font = Theme.Small, ForeColor = Theme.TextGray, Dock = DockStyle.Top,
+                Height = 68, BackColor = Theme.Bg
+            };
+            var choices = new Panel { Dock = DockStyle.Top, Height = 94, BackColor = Theme.Bg };
+            var label = new Label
+            {
+                Text = "Company release frequency", Font = Theme.BodyBold, ForeColor = Theme.TextDark,
+                Location = new Point(0, 5), Size = new Size(250, 24), BackColor = Theme.Bg
+            };
+            payrollFrequencyCombo = new ComboBox
+            {
+                Location = new Point(0, 34), Width = 340, DropDownStyle = ComboBoxStyle.DropDownList,
+                Font = Theme.Body
+            };
+            payrollFrequencyCombo.Items.Add(new PayrollPeriodOption(7, "Every 7 days (weekly)"));
+            payrollFrequencyCombo.Items.Add(new PayrollPeriodOption(15, "Every 15 days (semi-monthly: 1–15 / 16–end)"));
+            payrollFrequencyCombo.Items.Add(new PayrollPeriodOption(30, "Every 1 month (calendar month)"));
+            var save = new ModernButton
+            {
+                Text = "Save Payroll Policy", Location = new Point(355, 31), Size = new Size(190, 38),
+                SurroundColor = Theme.Bg
+            };
+            save.Click += (s, e) => SavePayrollPolicy();
+            choices.Controls.Add(label);
+            choices.Controls.Add(payrollFrequencyCombo);
+            choices.Controls.Add(save);
+
+            payrollPolicyStatus = new Label
+            {
+                Text = "", Font = Theme.Small, ForeColor = Theme.TextGray, Dock = DockStyle.Top,
+                Height = 36, BackColor = Theme.Bg
+            };
+            page.Controls.Add(payrollPolicyStatus);
+            page.Controls.Add(choices);
+            page.Controls.Add(explanation);
+            page.Controls.Add(heading);
+            return page;
+        }
+
+        private void LoadPayrollPolicy()
+        {
+            if (payrollFrequencyCombo == null) return;
+            try
+            {
+                var policy = PayrollScheduleService.GetPolicy();
+                for (int i = 0; i < payrollFrequencyCombo.Items.Count; i++)
+                    if (payrollFrequencyCombo.Items[i] is PayrollPeriodOption option && option.Days == policy.PeriodDays)
+                        payrollFrequencyCombo.SelectedIndex = i;
+                payrollPolicyStatus.Text = $"Current policy is effective from {policy.EffectiveFrom:MMMM d, yyyy}. Changing the frequency starts with the next complete cutoff; existing payslips are not changed.";
+            }
+            catch (Exception ex)
+            {
+                payrollPolicyStatus.Text = "Could not load the payroll release policy: " + ex.Message;
+                payrollPolicyStatus.ForeColor = Color.Firebrick;
+            }
+        }
+
+        private void SavePayrollPolicy()
+        {
+            if (payrollFrequencyCombo.SelectedItem is not PayrollPeriodOption option) return;
+            try
+            {
+                PayrollScheduleService.SavePolicy(option.Days);
+                LoadPayrollPolicy();
+                MessageBox.Show("Payroll release policy saved. It applies to the next complete cutoff; existing payslips stay unchanged.",
+                    "Payroll Policy", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Could not save the payroll release policy: " + ex.Message,
+                    "Payroll Policy", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private sealed class PayrollPeriodOption
+        {
+            public int Days { get; }
+            private readonly string label;
+            public PayrollPeriodOption(int days, string label) { Days = days; this.label = label; }
+            public override string ToString() => label;
         }
 
         // ------------------------------------------------------------------
