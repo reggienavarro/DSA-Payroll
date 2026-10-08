@@ -30,7 +30,7 @@ namespace PAYROLL
 
             BuildRightPanel();  // Dock.Fill — build first so the brand panel can dock over it
             Controls.Add(AuthBrandPanel.Build(
-                "Civil Engineering Payroll & Workforce Management",
+                "Company Payroll and Workforce Management",
                 new[]
                 {
                     (IconKind.Users, "Manage employees across every project site"),
@@ -198,7 +198,7 @@ namespace PAYROLL
 
                     if (role is "Admin" or "HR" or "Cash Management")
                     {
-                        var dashboard = new DashboardForm(username);
+                        var dashboard = new DashboardForm(username, employeeId);
                         dashboard.Show();
                     }
                     else if (role == "Employee" && employeeId.HasValue)

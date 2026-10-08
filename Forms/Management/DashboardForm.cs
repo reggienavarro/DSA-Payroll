@@ -49,14 +49,16 @@ namespace PAYROLL
         private DataGridView payslipsGrid = null!;
         private Form? hostedEmployeeForm;                      // EmployeeManagementForm, embedded in the dashboard
         private bool loggingOut;
+        private readonly int? signedInEmployeeId;
 
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
         public string CurrentUser { get; set; }
 
         // Default "Admin" keeps LoginForm compiling without any change.
-        public DashboardForm(string loggedInUser = "Admin")
+        public DashboardForm(string loggedInUser = "Admin", int? loggedInEmployeeId = null)
         {
             CurrentUser = loggedInUser;
+            signedInEmployeeId = loggedInEmployeeId;
             Text = "Payroll Dashboard";                     // same title as before
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.Manual;
@@ -805,7 +807,7 @@ namespace PAYROLL
 
             if (companyContent == null)
             {
-                companyContent = new CompanyPanel { Dock = DockStyle.Fill };
+                companyContent = new CompanyPanel(signedInEmployeeId) { Dock = DockStyle.Fill };
                 contentHost.Controls.Add(companyContent);
             }
             companyContent.Visible = true;

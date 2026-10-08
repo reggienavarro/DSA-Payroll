@@ -97,8 +97,6 @@ namespace PAYROLL
                 {
                     ("attendanceBonus", "Attendance Bonus", 0m),
                     ("tenureBonus", "Tenure Bonus", 0m),
-                    ("oic", "OIC", 0m),
-                    ("account", "Account", 0m),
                     ("internalCommission", "Internal Commission", 0m),
                 }, out var totalBonusRow, "TOTAL BONUS");
             totalBonusValue = totalBonusRow;
@@ -453,8 +451,8 @@ namespace PAYROLL
             decimal netPay = total - totalDeductions;
             netPayValue.Text = Theme.Money(netPay);
 
-            decimal totalBonus = ParseField("attendanceBonus") + ParseField("tenureBonus") + ParseField("oic") +
-                ParseField("account") + ParseField("internalCommission");
+            decimal totalBonus = ParseField("attendanceBonus") + ParseField("tenureBonus") +
+                ParseField("internalCommission");
             totalBonusValue.Text = Theme.Money(totalBonus);
 
             totalReceivableValue.Text = Theme.Money(netPay + totalBonus);
@@ -507,8 +505,6 @@ namespace PAYROLL
                 Loans = 0m,
                 AttendanceBonus = ParseField("attendanceBonus"),
                 TenureBonus = ParseField("tenureBonus"),
-                Oic = ParseField("oic"),
-                Account = ParseField("account"),
                 InternalCommission = ParseField("internalCommission"),
             };
             foreach (var benefit in companyBenefits)

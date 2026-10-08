@@ -210,14 +210,13 @@ namespace PAYROLL
         {
             string name = "", position = "";
             decimal basicSalary = 0, grossPay = 0, netPay = 0;
-            decimal hourlyRate = 0;
             bool found = false;
 
             try
             {
                 using var con = new MySqlConnection(AppConfig.ConnectionString);
                 using var cmd = new MySqlCommand(
-                    "SELECT EmployeeName, Position, BasicSalary, GrossPay, NetPay, HourlyRate FROM Employees WHERE EmployeeID=@id", con);
+                    "SELECT EmployeeName, Position, BasicSalary, GrossPay, NetPay FROM Employees WHERE EmployeeID=@id", con);
                 cmd.Parameters.AddWithValue("@id", employeeId);
                 con.Open();
                 using var reader = cmd.ExecuteReader();
@@ -229,7 +228,6 @@ namespace PAYROLL
                     basicSalary = Convert.ToDecimal(reader["BasicSalary"]);
                     grossPay = Convert.ToDecimal(reader["GrossPay"]);
                     netPay = Convert.ToDecimal(reader["NetPay"]);
-                    hourlyRate = Convert.ToDecimal(reader["HourlyRate"]);
                 }
             }
             catch (Exception ex)
@@ -270,24 +268,28 @@ namespace PAYROLL
             cardsRow.Controls.Add(card2);
             cardsRow.Controls.Add(card3);
 
-            var estimatedMonthlyContributions = DeductionsCalculator.Compute(
-                DeductionsCalculator.MonthlySalaryFromHourlyRate(hourlyRate));
-            decimal sss = latestPayslip?.SssContribution ?? estimatedMonthlyContributions.sss / 2m;
-            decimal philHealth = latestPayslip?.PhilHealthContribution ?? estimatedMonthlyContributions.philHealth / 2m;
-            decimal pagIbig = latestPayslip?.HmdfContribution ?? estimatedMonthlyContributions.pagIbig / 2m;
+            bool hasPayslip = latestPayslip != null;
+            decimal sss = latestPayslip?.SssContribution ?? 0m;
+            decimal philHealth = latestPayslip?.PhilHealthContribution ?? 0m;
+            decimal pagIbig = latestPayslip?.HmdfContribution ?? 0m;
             decimal overbreak = latestPayslip?.LateUtOb ?? 0m;
-            decimal totalDeductions = latestPayslip?.TotalDeductions ?? sss + philHealth + pagIbig;
+            decimal totalDeductions = latestPayslip?.TotalDeductions ?? 0m;
 
             var deductionsSection = new RoundedPanel { Location = new Point(0, 180), Width = 592 };
-            var dTitle = new Label { Text = "Where your deductions come from", Font = Theme.H2, ForeColor = Theme.TextDark, AutoSize = true, Location = new Point(20, 16), BackColor = Color.White };
+            var dTitle = new Label
+            {
+                Text = hasPayslip ? "Deductions on latest payslip" : "No payslip deductions yet",
+                Font = Theme.H2, ForeColor = Theme.TextDark, AutoSize = true,
+                Location = new Point(20, 16), BackColor = Color.White
+            };
             deductionsSection.Controls.Add(dTitle);
 
             var rows = new List<(string label, decimal value, string note)>
             {
-                ("Overbreak", overbreak, "Excess break time above 60 minutes"),
-                ("SSS", sss, "Employee share for this cutoff"),
-                ("PhilHealth", philHealth, "Employee share for this cutoff"),
-                ("Pag-IBIG", pagIbig, "Employee share for this cutoff"),
+                ("Overbreak", overbreak, hasPayslip ? "Excess break time above 60 minutes" : "No payslip generated yet"),
+                ("SSS", sss, hasPayslip ? "Employee share for this cutoff" : "No payslip generated yet"),
+                ("PhilHealth", philHealth, hasPayslip ? "Employee share for this cutoff" : "No payslip generated yet"),
+                ("Pag-IBIG", pagIbig, hasPayslip ? "Employee share for this cutoff" : "No payslip generated yet"),
             };
             if (latestPayslip?.Loans > 0)
                 rows.Add(("Legacy Loan", latestPayslip.Loans, "Saved on an earlier payslip"));

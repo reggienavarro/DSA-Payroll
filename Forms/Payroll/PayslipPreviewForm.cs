@@ -69,8 +69,10 @@ namespace PAYROLL
             b.AppendLine();
             Add(b, "Attendance Bonus", payslip.AttendanceBonus);
             Add(b, "Tenure Bonus", payslip.TenureBonus);
-            Add(b, "OIC", payslip.Oic);
-            Add(b, "Account", payslip.Account);
+            // Keep legacy non-zero entries visible on previously saved payslips,
+            // but don't show these retired bonus fields on newly generated slips.
+            if (payslip.Oic != 0m) Add(b, "OIC", payslip.Oic);
+            if (payslip.Account != 0m) Add(b, "Account", payslip.Account);
             Add(b, "Incentives", payslip.Incentives);
             Add(b, "Internal Commission", payslip.InternalCommission);
             Add(b, "TOTAL AMOUNT RECEIVABLE", payslip.TotalAmountReceivable);

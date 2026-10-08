@@ -26,9 +26,12 @@ namespace PAYROLL
         private TextBox departmentName = null!;
         private readonly System.Windows.Forms.Timer calendarRefreshTimer = new() { Interval = 30000 };
         private TabControl companyTabs = null!;
+        private readonly int? signedInEmployeeId;
+        private Label myAttendanceStatusLabel = null!;
 
-        public CompanyPanel()
+        public CompanyPanel(int? signedInEmployeeId = null)
         {
+            this.signedInEmployeeId = signedInEmployeeId;
             BackColor = Theme.Bg;
             Padding = new Padding(24);
 
@@ -341,6 +344,18 @@ namespace PAYROLL
             };
             calendarMonth.DateChanged += (s, e) => LoadCalendar();
 
+            var calendarColumn = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2,
+                BackColor = Theme.Bg, Margin = Padding.Empty, Padding = Padding.Empty
+            };
+            calendarColumn.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            calendarColumn.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            calendarColumn.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            calendarMonth.Dock = DockStyle.Top;
+            calendarColumn.Controls.Add(calendarMonth, 0, 0);
+            calendarColumn.Controls.Add(BuildMyAttendancePanel(), 0, 1);
+
             calendarEventsGrid = new DataGridView { Dock = DockStyle.Fill, ReadOnly = true };
             GridStyle.Apply(calendarEventsGrid);
             calendarEventsGrid.CellClick += (s, e) =>
@@ -426,11 +441,134 @@ namespace PAYROLL
 
             layout.Controls.Add(title, 0, 0);
             layout.Controls.Add(calendarDateLabel, 1, 0);
-            layout.Controls.Add(calendarMonth, 0, 1);
+            layout.Controls.Add(calendarColumn, 0, 1);
             layout.Controls.Add(details, 1, 1);
             page.Controls.Add(layout);
             return page;
         }
+
+        private Panel BuildMyAttendancePanel()
+        {
+            var panel = new Panel
+            {
+                Dock = DockStyle.Fill, BackColor = Color.White,
+                Padding = new Padding(8), Margin = new Padding(0, 8, 0, 0)
+            };
+            var heading = new Label
+            {
+                Text = "My attendance · Today", Location = new Point(8, 8), Size = new Size(244, 22),
+                Font = Theme.BodyBold, ForeColor = Theme.TextDark, BackColor = Color.White
+            };
+            myAttendanceStatusLabel = new Label
+            {
+                Text = signedInEmployeeId.HasValue
+                    ? "Loading today's attendance…"
+                    : "This admin account is not linked to an employee record.",
+                Location = new Point(8, 32), Size = new Size(244, 36), AutoEllipsis = true,
+                Font = Theme.Small, ForeColor = Theme.TextGray, BackColor = Color.White
+            };
+            var departmentHint = new Label
+            {
+                Text = "Recorded under the department on your employee profile.",
+                Location = new Point(8, 68), Size = new Size(244, 28), AutoEllipsis = true,
+                Font = Theme.Small, ForeColor = Theme.TextGray, BackColor = Color.White
+            };
+            panel.Controls.Add(heading);
+            panel.Controls.Add(myAttendanceStatusLabel);
+            panel.Controls.Add(departmentHint);
+
+            AddAttendanceAction(panel, "TIME IN", 100, time => AttendanceService.RecordTimeIn(RequireSignedInEmployee(), time));
+            AddAttendanceAction(panel, "BREAK OUT", 140, time => AttendanceService.RecordBreakOut(RequireSignedInEmployee(), time));
+            AddAttendanceAction(panel, "BREAK IN", 180, time => RecordAdminBreakIn(time));
+            AddAttendanceAction(panel, "TIME OUT", 220, time => RecordAdminTimeOut(time));
+            if (!signedInEmployeeId.HasValue)
+            {
+                foreach (Control control in panel.Controls)
+                    if (control is ModernButton button) button.Enabled = false;
+            }
+            return panel;
+        }
+
+        private void AddAttendanceAction(Panel parent, string labelText, int top, Action<TimeSpan> record)
+        {
+            var label = new Label
+            {
+                Text = labelText, Location = new Point(8, top + 8), Size = new Size(60, 20),
+                Font = Theme.SmallBold, ForeColor = Theme.TextGray, BackColor = Color.White
+            };
+            var time = new DateTimePicker
+            {
+                Location = new Point(68, top + 2), Width = 112, Height = 28,
+                Format = DateTimePickerFormat.Time, ShowUpDown = true, Value = DateTime.Now
+            };
+            var button = new ModernButton
+            {
+                Text = "Record", Location = new Point(184, top), Size = new Size(72, 34),
+                SurroundColor = Color.White
+            };
+            button.Click += (s, e) =>
+            {
+                try
+                {
+                    record(time.Value.TimeOfDay);
+                    LoadCalendar();
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, ex.Message, "My Attendance", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            };
+            parent.Controls.Add(label);
+            parent.Controls.Add(time);
+            parent.Controls.Add(button);
+        }
+
+        private int RequireSignedInEmployee()
+            => signedInEmployeeId ?? throw new InvalidOperationException(
+                "Your admin account is not linked to an employee record. Ask an administrator to link the account before recording attendance.");
+
+        private void RecordAdminBreakIn(TimeSpan time)
+        {
+            int employeeId = RequireSignedInEmployee();
+            int unfinished = AttendanceService.GetUnfinishedBreakMinutes(employeeId, time);
+            if (unfinished > 0 && MessageBox.Show(this,
+                    $"Your one-hour break isn't finished yet ({unfinished} minute(s) left).\n\n" +
+                    "You can still break in, but the unfinished part of your break won't be counted on your payslip.\n\nBreak in now?",
+                    "Break not finished", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+                return;
+            AttendanceService.RecordBreakIn(employeeId, time);
+        }
+
+        private void RecordAdminTimeOut(TimeSpan time)
+        {
+            int employeeId = RequireSignedInEmployee();
+            int undertime = AttendanceService.GetUndertimeMinutes(employeeId, time);
+            if (undertime > 0 && MessageBox.Show(this,
+                    $"You are {AttendanceService.FormatDuration(undertime)} short of your regular duty. " +
+                    "This will be recorded as undertime for management follow-up.\n\nTime out anyway?",
+                    "Undertime", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+                return;
+            AttendanceService.RecordTimeOut(employeeId, time);
+        }
+
+        private void RefreshMyAttendanceStatus()
+        {
+            if (myAttendanceStatusLabel == null) return;
+            if (!signedInEmployeeId.HasValue)
+            {
+                myAttendanceStatusLabel.Text = "This admin account is not linked to an employee record.";
+                return;
+            }
+
+            var record = AttendanceService.ListForDate(DateTime.Today, signedInEmployeeId.Value)
+                .Find(item => item.EmployeeId == signedInEmployeeId.Value);
+            myAttendanceStatusLabel.Text = record == null
+                ? "No attendance recorded today."
+                : $"In {Clock(record.TimeIn)}  ·  Break {Clock(record.BreakOut)}–{Clock(record.BreakIn)}  ·  Out {Clock(record.TimeOut)}";
+        }
+
+        private static string Clock(TimeSpan? time)
+            => time.HasValue ? DateTime.Today.Add(time.Value).ToString("h:mm tt") : "—";
 
         private void LoadCalendar()
         {
@@ -467,6 +605,7 @@ namespace PAYROLL
                 }
                 calendarMonth.UpdateBoldedDates();
                 LoadCalendarDepartments();
+                RefreshMyAttendanceStatus();
             }
             catch (Exception ex)
             {
