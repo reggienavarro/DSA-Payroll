@@ -1018,6 +1018,10 @@ namespace PAYROLL
                 {
                     col.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
                     col.DefaultCellStyle.Format = Theme.Currency + "#,##0.00";
+                    // Keep each monetary heading directly above its right-aligned values.
+                    // This makes ₱0.00 and larger figures line up in the same visual column.
+                    col.HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleRight;
+                    col.HeaderCell.Style.Padding = new Padding(0, 0, 10, 0);
                     col.FillWeight = 85;
                 }
                 else if (n.Contains("name")) col.FillWeight = 140;
