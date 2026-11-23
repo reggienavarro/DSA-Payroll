@@ -16,21 +16,28 @@ namespace PAYROLL
     {
         private readonly string username;
         private readonly int employeeId;
+        private readonly bool canManageAttendance;
+        private readonly int? attendanceDepartmentScopeId;
 
         private Label headerTitle = null!;
         private Panel contentHost = null!;
         private Label warningBanner = null!;
         private SidebarButton navPayroll = null!, navCalendar = null!, navTickets = null!, navPayslips = null!, navLeave = null!;
+        private SidebarButton? navTeamAttendance;
+        private CompanyPanel? teamAttendancePanel;
         private DataGridView myPayslipsGrid = null!;
         private List<Payslip> visiblePayslips = new();
         private Button openPayslipButton = null!;
         private readonly System.Windows.Forms.Timer notificationTimer;
         private Button notificationButton = null!;
 
-        public EmployeeDashboardForm(string username, int employeeId)
+        public EmployeeDashboardForm(string username, int employeeId, bool canManageAttendance = false,
+            int? attendanceDepartmentScopeId = null)
         {
             this.username = username;
             this.employeeId = employeeId;
+            this.canManageAttendance = canManageAttendance;
+            this.attendanceDepartmentScopeId = attendanceDepartmentScopeId;
 
             Text = "Payroll System - My Payroll";
             FormBorderStyle = FormBorderStyle.None;
@@ -93,6 +100,16 @@ namespace PAYROLL
             nav.Controls.Add(navCalendar);
             nav.Controls.Add(navLeave);
             nav.Controls.Add(navTickets);
+            if (canManageAttendance)
+            {
+                navTeamAttendance = new SidebarButton
+                {
+                    Text = "Team Attendance", Icon = IconKind.Users,
+                    Width = 224, Height = 46, Margin = new Padding(0)
+                };
+                navTeamAttendance.Click += (s, e) => Navigate("attendance");
+                nav.Controls.Add(navTeamAttendance);
+            }
 
             var logoutBar = new Panel { Dock = DockStyle.Bottom, Height = 60, BackColor = Theme.Navy };
             var logoutBtn = new SidebarButton
@@ -172,7 +189,17 @@ namespace PAYROLL
             navCalendar.Invalidate();
             navLeave.Invalidate();
             navTickets.Invalidate();
+            if (navTeamAttendance != null)
+            {
+                navTeamAttendance.Active = view == "attendance";
+                navTeamAttendance.Invalidate();
+            }
 
+            if (teamAttendancePanel != null)
+            {
+                teamAttendancePanel.Dispose();
+                teamAttendancePanel = null;
+            }
             contentHost.Controls.Clear();
             warningBanner.Visible = false;
 
@@ -196,11 +223,27 @@ namespace PAYROLL
                 headerTitle.Text = "My Leave";
                 ShowMyLeave();
             }
+            else if (view == "attendance" && canManageAttendance)
+            {
+                headerTitle.Text = "Team Attendance";
+                ShowTeamAttendance();
+            }
             else
             {
                 headerTitle.Text = "My Tickets";
                 ShowTickets();
             }
+        }
+
+        private void ShowTeamAttendance()
+        {
+            teamAttendancePanel = new CompanyPanel(employeeId, attendanceOnly: true,
+                attendanceDepartmentScopeId: attendanceDepartmentScopeId)
+            {
+                Dock = DockStyle.Fill
+            };
+            contentHost.Controls.Add(teamAttendancePanel);
+            teamAttendancePanel.RefreshAll();
         }
 
         // ------------------------------------------------------------------
@@ -332,6 +375,9 @@ namespace PAYROLL
                 if (form.ShowDialog(this) == DialogResult.OK)
                 {
                     TicketService.Create(employeeId, form.Subject, form.Message, form.Urgency, form.Category);
+                    // The record has been committed. Open a newly loaded ticket list
+                    // so the employee sees the item right away instead of needing to refresh.
+                    Navigate("tickets");
                     MessageBox.Show("Your ticket has been submitted. Management will respond in My Tickets.",
                         "Ticket Submitted", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
@@ -457,7 +503,9 @@ namespace PAYROLL
             requestButton.Click += (s, e) =>
             {
                 using var form = new LeaveRequestForm(employeeId);
-                if (form.ShowDialog(this) == DialogResult.OK) ShowMyLeave();
+                // Navigate clears the existing leave panel before loading a new list.
+                // Calling ShowMyLeave directly could leave the older grid on top.
+                if (form.ShowDialog(this) == DialogResult.OK) Navigate("leave");
             };
             header.Controls.Add(title);
             header.Controls.Add(subtitle);
@@ -508,65 +556,11 @@ namespace PAYROLL
                 FirstDayOfWeek = Day.Sunday,
                 BackColor = Color.White
             };
-            var timeInLabel = new Label
+            var attendanceNotice = new Label
             {
-                Text = "TIME IN", Location = new Point(250, 8), AutoSize = true,
-                Font = Theme.SmallBold, ForeColor = Theme.TextGray, BackColor = Theme.Bg
-            };
-            var timeInValue = new DateTimePicker
-            {
-                Location = new Point(250, 30), Width = 120, Format = DateTimePickerFormat.Time,
-                ShowUpDown = true, Value = DateTime.Now
-            };
-            var timeIn = new ModernButton
-            {
-                Text = "Record", Location = new Point(380, 27), Size = new Size(100, 36), SurroundColor = Theme.Bg
-            };
-            var breakOutLabel = new Label
-            {
-                Text = "BREAK OUT", Location = new Point(500, 8), AutoSize = true,
-                Font = Theme.SmallBold, ForeColor = Theme.TextGray, BackColor = Theme.Bg
-            };
-            var breakOutValue = new DateTimePicker
-            {
-                Location = new Point(500, 30), Width = 120, Format = DateTimePickerFormat.Time,
-                ShowUpDown = true, Value = DateTime.Now
-            };
-            var breakOut = new ModernButton
-            {
-                Text = "Record", Location = new Point(630, 27), Size = new Size(100, 36), SurroundColor = Theme.Bg
-            };
-            var breakInLabel = new Label
-            {
-                Text = "BREAK IN", Location = new Point(250, 76), AutoSize = true,
-                Font = Theme.SmallBold, ForeColor = Theme.TextGray, BackColor = Theme.Bg
-            };
-            var breakInValue = new DateTimePicker
-            {
-                Location = new Point(250, 98), Width = 120, Format = DateTimePickerFormat.Time,
-                ShowUpDown = true, Value = DateTime.Now
-            };
-            var breakIn = new ModernButton
-            {
-                Text = "Record", Location = new Point(380, 95), Size = new Size(100, 36), SurroundColor = Theme.Bg
-            };
-            var timeOutLabel = new Label
-            {
-                Text = "TIME OUT", Location = new Point(500, 76), AutoSize = true,
-                Font = Theme.SmallBold, ForeColor = Theme.TextGray, BackColor = Theme.Bg
-            };
-            var timeOutValue = new DateTimePicker
-            {
-                Location = new Point(500, 98), Width = 120, Format = DateTimePickerFormat.Time,
-                ShowUpDown = true, Value = DateTime.Now
-            };
-            var timeOut = new ModernButton
-            {
-                Text = "Record", Location = new Point(630, 95), Size = new Size(100, 36), SurroundColor = Theme.Bg
-            };
-            var reportAbsence = new ModernButton
-            {
-                Text = "Report Absence", Location = new Point(250, 150), Size = new Size(160, 36), SurroundColor = Theme.Bg
+                Text = "Attendance is recorded by your Team Leader / Supervisor.\nUse this calendar to view your attendance, leave requests, and holidays.",
+                Location = new Point(250, 8), Size = new Size(570, 58),
+                Font = Theme.Body, ForeColor = Theme.TextGray, BackColor = Theme.Bg
             };
             var recordsGrid = new DataGridView
             {
@@ -675,91 +669,11 @@ namespace PAYROLL
                     calendar.AddBoldedDate(record.AttendanceDate.Date);
                 calendar.UpdateBoldedDates();
                 recordsGrid.DataSource = records;
-                timeIn.Enabled = selected == DateTime.Today;
-                breakOut.Enabled = selected == DateTime.Today;
-                breakIn.Enabled = selected == DateTime.Today;
-                timeOut.Enabled = selected == DateTime.Today;
-                reportAbsence.Enabled = selected <= DateTime.Today;
             }
 
             calendar.DateChanged += (s, e) => RefreshCalendar();
-            timeIn.Click += (s, e) =>
-            {
-                try { AttendanceService.RecordTimeIn(employeeId, timeInValue.Value.TimeOfDay); RefreshCalendar(); }
-                catch (Exception ex) { MessageBox.Show(ex.Message, "Attendance", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
-            };
-            breakOut.Click += (s, e) =>
-            {
-                try { AttendanceService.RecordBreakOut(employeeId, breakOutValue.Value.TimeOfDay); RefreshCalendar(); }
-                catch (Exception ex) { MessageBox.Show(ex.Message, "Attendance", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
-            };
-            breakIn.Click += (s, e) =>
-            {
-                try
-                {
-                    var returnTime = breakInValue.Value.TimeOfDay;
-
-                    // An early break-in is allowed, but the employee is warned first.
-                    int unfinished = AttendanceService.GetUnfinishedBreakMinutes(employeeId, returnTime);
-                    if (unfinished > 0 && MessageBox.Show(
-                            $"Your one-hour break isn't finished yet ({unfinished} minute(s) left).\n\n" +
-                            "You can still break in, but the unfinished part of your break won't be counted on " +
-                            "your payslip. The full hour is still taken as your break, so working through it earns no extra pay.\n\n" +
-                            "Break in now?",
-                            "Break not finished", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
-                        return;
-
-                    AttendanceService.RecordBreakIn(employeeId, returnTime);
-                    RefreshCalendar();
-                }
-                catch (Exception ex) { MessageBox.Show(ex.Message, "Attendance", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
-            };
-            timeOut.Click += (s, e) =>
-            {
-                try
-                {
-                    var leaveTime = timeOutValue.Value.TimeOfDay;
-
-                    // Timing out early is allowed, but the employee is warned first, and
-                    // management gets a notice to follow up on.
-                    int shortBy = AttendanceService.GetUndertimeMinutes(employeeId, leaveTime);
-                    if (shortBy > 0 && MessageBox.Show(
-                            $"You haven't completed your {AttendanceService.RegularDayMinutes / 60}-hour duty. " +
-                            $"You are {AttendanceService.FormatDuration(shortBy)} short.\n\n" +
-                            "That time will be deducted from your salary. Management will also be notified " +
-                            "of this undertime and may talk to you about the reason.\n\n" +
-                            "Time out anyway?",
-                            "Undertime", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
-                        return;
-
-                    AttendanceService.RecordTimeOut(employeeId, leaveTime);
-                    RefreshCalendar();
-                }
-                catch (Exception ex) { MessageBox.Show(ex.Message, "Attendance", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
-            };
-            reportAbsence.Click += (s, e) =>
-            {
-                try
-                {
-                    AttendanceService.ReportAbsence(employeeId, calendar.SelectionStart);
-                    RefreshCalendar();
-                }
-                catch (Exception ex) { MessageBox.Show(ex.Message, "Attendance", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
-            };
             panel.Controls.Add(calendar);
-            panel.Controls.Add(timeInLabel);
-            panel.Controls.Add(timeInValue);
-            panel.Controls.Add(timeIn);
-            panel.Controls.Add(breakOutLabel);
-            panel.Controls.Add(breakOutValue);
-            panel.Controls.Add(breakOut);
-            panel.Controls.Add(breakInLabel);
-            panel.Controls.Add(breakInValue);
-            panel.Controls.Add(breakIn);
-            panel.Controls.Add(timeOutLabel);
-            panel.Controls.Add(timeOutValue);
-            panel.Controls.Add(timeOut);
-            panel.Controls.Add(reportAbsence);
+            panel.Controls.Add(attendanceNotice);
             panel.Controls.Add(recordsGrid);
             contentHost.Controls.Add(panel);
             RefreshCalendar();

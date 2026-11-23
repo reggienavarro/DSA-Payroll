@@ -143,14 +143,16 @@ internal static class OwnerPasscodeService
         }
     }
 
-    public static void AddPromotionAudit(
+    public static void AddRoleAudit(
         MySqlConnection connection, MySqlTransaction transaction,
-        int employeeId, string changedBy)
+        int employeeId, string previousRole, string newRole, string changedBy)
     {
         using var command = new MySqlCommand(@"
             INSERT INTO AdminRoleAudit (EmployeeID, PreviousRole, NewRole, ChangedBy)
-            VALUES (@EmployeeID, 'Employee', 'Admin', @ChangedBy)", connection, transaction);
+            VALUES (@EmployeeID, @PreviousRole, @NewRole, @ChangedBy)", connection, transaction);
         command.Parameters.AddWithValue("@EmployeeID", employeeId);
+        command.Parameters.AddWithValue("@PreviousRole", previousRole);
+        command.Parameters.AddWithValue("@NewRole", newRole);
         command.Parameters.AddWithValue("@ChangedBy", string.IsNullOrWhiteSpace(changedBy) ? "Admin" : changedBy);
         command.ExecuteNonQuery();
     }

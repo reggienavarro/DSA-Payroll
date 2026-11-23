@@ -3,11 +3,11 @@ namespace PAYROLL
     internal static class AppConfig
     {
         public const string ConnectionString =
-    "Server=payroll-database-payroll-system123.k.aivencloud.com;" +
-    "Port=17680;" +
-    "Database=payroldb;" +
-    "User ID=avnadmin;" +
+    "Server=127.0.0.1;" +
+    "Port=3306;" +
+    "Database=payrolldb;" +
+    "User ID=root;" +
     "Password=;" +
-    "SslMode=Required;";
+    "SslMode=None;";
     }
 }

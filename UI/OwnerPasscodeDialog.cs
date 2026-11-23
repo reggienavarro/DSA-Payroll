@@ -6,7 +6,7 @@ namespace PAYROLL.UI;
 internal static class OwnerPasscodeDialog
 {
     public static bool Configure(
-        IWin32Window owner, string employeeName, string currentUser, Func<string, bool> savePasscode)
+        IWin32Window owner, string employeeName, string roleDisplay, string currentUser, Func<string, bool> savePasscode)
     {
         using var dialog = new Form
         {
@@ -32,7 +32,7 @@ internal static class OwnerPasscodeDialog
         };
         var explanation = new Label
         {
-            Text = $"One-time setup. Signed in as {currentUser}. This also approves promoting {employeeName} to Admin. The first admin to set it should be the owner.",
+            Text = $"One-time setup. Signed in as {currentUser}. This also authorizes assigning {employeeName} as {roleDisplay}. The first manager to set it should be the owner.",
             Font = Theme.Small,
             ForeColor = Theme.TextGray,
             AutoEllipsis = true,
@@ -84,7 +84,7 @@ internal static class OwnerPasscodeDialog
             BackColor = Color.White,
             Visible = false
         };
-        var saveButton = CreateButton("Save and promote", new Point(213, 214), Theme.Accent, Color.White, Theme.BodyBold);
+        var saveButton = CreateButton("Save & assign", new Point(205, 214), Theme.Accent, Color.White, Theme.BodyBold);
         var cancelButton = CreateButton("Cancel", new Point(338, 214), Color.FromArgb(238, 241, 245), Theme.TextDark, Theme.Body);
         cancelButton.DialogResult = DialogResult.Cancel;
 
@@ -140,7 +140,7 @@ internal static class OwnerPasscodeDialog
         return dialog.ShowDialog(owner) == DialogResult.OK;
     }
 
-    public static bool Verify(IWin32Window owner, string employeeName, Func<string, bool> verifyPasscode)
+    public static bool Verify(IWin32Window owner, string employeeName, string roleDisplay, Func<string, bool> verifyPasscode)
     {
         using var dialog = new Form
         {
@@ -157,7 +157,7 @@ internal static class OwnerPasscodeDialog
 
         var heading = new Label
         {
-            Text = "Confirm admin promotion",
+            Text = "Confirm role assignment",
             Font = Theme.H2,
             ForeColor = Theme.TextDark,
             AutoSize = true,
@@ -166,7 +166,7 @@ internal static class OwnerPasscodeDialog
         };
         var explanation = new Label
         {
-            Text = $"Promoting {employeeName} to Admin. Owner passcode required.",
+            Text = $"Assigning {employeeName} as {roleDisplay}. Owner passcode required.",
             Font = Theme.Small,
             ForeColor = Theme.TextGray,
             AutoEllipsis = true,

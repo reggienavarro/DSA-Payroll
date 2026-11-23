@@ -309,7 +309,13 @@ namespace PAYROLL
                 adapter.Fill(table);
                 table.Columns.Add("HireDateDisplay", typeof(string));
                 foreach (DataRow row in table.Rows)
+                {
                     row["HireDateDisplay"] = row["HireDate"] is DBNull ? "—" : Convert.ToDateTime(row["HireDate"]).ToString("MMM d, yyyy");
+                    string role = row["AccountRole"]?.ToString() ?? "";
+                    row["AccountStatus"] = string.IsNullOrWhiteSpace(role)
+                        ? "No account yet"
+                        : AccountRoles.DisplayName(role) + " account";
+                }
                 dgvPayroll.DataSource = null;
                 employeeView = table.DefaultView;
                 dgvPayroll.DataSource = employeeView;
@@ -372,23 +378,39 @@ namespace PAYROLL
             if (dgvPayroll.Rows[e.RowIndex].DataBoundItem is not DataRowView row) return;
             int employeeId = Convert.ToInt32(row["EmployeeID"]);
             string employeeName = row["EmployeeName"]?.ToString() ?? "this employee";
-            bool canPromote = Convert.ToBoolean(row["IsActive"]) &&
-                string.Equals(row["AccountRole"]?.ToString(), "Employee", StringComparison.OrdinalIgnoreCase);
+            bool canAssignRole = Convert.ToBoolean(row["IsActive"]) &&
+                !string.IsNullOrWhiteSpace(row["AccountRole"]?.ToString());
             var menu = new ContextMenuStrip();
             menu.Items.Add("Generate payslip", null, (s, args) => GeneratePayslip(employeeId));
-            var promoteItem = menu.Items.Add("Promote account to Admin", null,
-                (s, args) => PromoteEmployeeToAdmin(employeeId, employeeName));
-            promoteItem.Enabled = canPromote;
-            promoteItem.ToolTipText = canPromote
-                ? "Requires the owner passcode."
-                : "Only active employees with a registered Employee account can be promoted.";
+            var roleMenu = new ToolStripMenuItem("Assign account role") { Enabled = canAssignRole };
+            string currentRole = row["AccountRole"]?.ToString() ?? "";
+            foreach (var option in new[]
+            {
+                (Value: AccountRoles.HrCashManager, Label: "HR / Cash Manager"),
+                (Value: AccountRoles.TeamLeaderSupervisor, Label: "Team Leader / Supervisor"),
+                (Value: AccountRoles.Employee, Label: "Employee")
+            })
+            {
+                var item = new ToolStripMenuItem(option.Label)
+                {
+                    Enabled = canAssignRole && !string.Equals(
+                        AccountRoles.DisplayName(currentRole), option.Label, StringComparison.OrdinalIgnoreCase)
+                };
+                item.Click += (s, args) => AssignEmployeeRole(employeeId, employeeName, option.Value);
+                roleMenu.DropDownItems.Add(item);
+            }
+            roleMenu.ToolTipText = canAssignRole
+                ? "Changing an account role requires the owner passcode."
+                : "Only active employees with a registered account can be assigned a role.";
+            menu.Items.Add(roleMenu);
             menu.Items.Add("Delete employee", null, (s, args) => DeleteEmployee(employeeId));
             var cell = dgvPayroll.GetCellDisplayRectangle(e.ColumnIndex, e.RowIndex, true);
             menu.Show(dgvPayroll, new Point(cell.Right, cell.Bottom));
         }
 
-        private void PromoteEmployeeToAdmin(int employeeId, string employeeName)
+        private void AssignEmployeeRole(int employeeId, string employeeName, string targetRole)
         {
+            string roleDisplay = AccountRoles.DisplayName(targetRole);
             try
             {
                 bool passcodeJustConfigured = false;
@@ -397,6 +419,7 @@ namespace PAYROLL
                     passcodeJustConfigured = OwnerPasscodeDialog.Configure(
                         this,
                         employeeName,
+                        roleDisplay,
                         currentUser,
                         passcode => OwnerPasscodeService.Configure(connectionString, passcode, currentUser));
                     if (!passcodeJustConfigured) return;
@@ -409,10 +432,11 @@ namespace PAYROLL
                             "Owner verification locked", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                         return;
                     }
-                    if (!OwnerPasscodeDialog.Verify(this, employeeName,
+                    if (!OwnerPasscodeDialog.Verify(this, employeeName, roleDisplay,
                         passcode => OwnerPasscodeService.Verify(connectionString, passcode))) return;
                 }
 
+                AccountRoles.EnsureRoleColumnSupportsAssignments(connectionString);
                 using var connection = new MySqlConnection(connectionString);
                 connection.Open();
                 using var transaction = connection.BeginTransaction();
@@ -429,29 +453,45 @@ namespace PAYROLL
                         isActive = Convert.ToBoolean(activeResult);
                     }
                     if (!isActive)
-                        throw new InvalidOperationException("Inactive employees cannot be promoted to Admin.");
+                        throw new InvalidOperationException("Inactive employees cannot be assigned a management role.");
 
-                    int accountCount;
-                    using (var accountCountCommand = new MySqlCommand(
-                        "SELECT COUNT(*) FROM Accounts WHERE EmployeeID=@ID", connection, transaction))
+                    var accountRoles = new List<string>();
+                    using (var accountQuery = new MySqlCommand(
+                        "SELECT Role FROM Accounts WHERE EmployeeID=@ID FOR UPDATE", connection, transaction))
                     {
-                        accountCountCommand.Parameters.AddWithValue("@ID", employeeId);
-                        accountCount = Convert.ToInt32(accountCountCommand.ExecuteScalar());
+                        accountQuery.Parameters.AddWithValue("@ID", employeeId);
+                        using var reader = accountQuery.ExecuteReader();
+                        while (reader.Read()) accountRoles.Add(reader["Role"]?.ToString() ?? "");
                     }
-                    if (accountCount != 1)
-                        throw new InvalidOperationException(accountCount == 0
-                            ? "This employee must register an account before being promoted."
-                            : "More than one account is linked to this employee. Resolve the duplicate accounts before promotion.");
+                    if (accountRoles.Count != 1)
+                        throw new InvalidOperationException(accountRoles.Count == 0
+                            ? "This employee must register an account before an account role can be assigned."
+                            : "More than one account is linked to this employee. Resolve the duplicate accounts before assigning a role.");
+                    string previousRole = accountRoles[0];
+                    if (string.Equals(AccountRoles.DisplayName(previousRole), roleDisplay, StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidOperationException($"This account already has the {roleDisplay} role.");
+
+                    if (AccountRoles.IsHrCashManager(previousRole) && !AccountRoles.IsHrCashManager(targetRole))
+                    {
+                        using var managers = new MySqlCommand(@"
+                            SELECT COUNT(*) FROM Accounts
+                            WHERE EmployeeID<>@ID
+                              AND Role IN ('Admin','HR','HR/Cash Manager','Cash Management','Cash Manager')", connection, transaction);
+                        managers.Parameters.AddWithValue("@ID", employeeId);
+                        if (Convert.ToInt32(managers.ExecuteScalar()) == 0)
+                            throw new InvalidOperationException("At least one HR / Cash Manager account must remain in the system.");
+                    }
 
                     using (var update = new MySqlCommand(
-                        "UPDATE Accounts SET Role='Admin' WHERE EmployeeID=@ID AND Role='Employee'", connection, transaction))
+                        "UPDATE Accounts SET Role=@Role WHERE EmployeeID=@ID", connection, transaction))
                     {
+                        update.Parameters.AddWithValue("@Role", targetRole);
                         update.Parameters.AddWithValue("@ID", employeeId);
                         if (update.ExecuteNonQuery() != 1)
-                            throw new InvalidOperationException("The employee account is no longer eligible for promotion.");
+                            throw new InvalidOperationException("The employee account could not be updated.");
                     }
 
-                    OwnerPasscodeService.AddPromotionAudit(connection, transaction, employeeId, currentUser);
+                    OwnerPasscodeService.AddRoleAudit(connection, transaction, employeeId, previousRole, targetRole, currentUser);
                     transaction.Commit();
                 }
                 catch
@@ -460,13 +500,13 @@ namespace PAYROLL
                     throw;
                 }
 
-                MessageBox.Show(this, $"{employeeName} is now an Admin.", "Promotion complete",
+                MessageBox.Show(this, $"{employeeName} is now assigned as {roleDisplay}.", "Role updated",
                     MessageBoxButtons.OK, MessageBoxIcon.Information);
                 LoadEmployees();
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, "Could not promote this employee: " + ex.Message, "Admin promotion",
+                MessageBox.Show(this, "Could not update this account role: " + ex.Message, "Role assignment",
                     MessageBoxButtons.OK, ex is MySqlException ? MessageBoxIcon.Error : MessageBoxIcon.Warning);
             }
         }

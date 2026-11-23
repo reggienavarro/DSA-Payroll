@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Data;
 using System.Drawing;
 using System.Linq;
@@ -27,19 +28,28 @@ namespace PAYROLL
         private readonly System.Windows.Forms.Timer calendarRefreshTimer = new() { Interval = 30000 };
         private TabControl companyTabs = null!;
         private readonly int? signedInEmployeeId;
+        private readonly bool attendanceOnly;
+        private readonly int? attendanceDepartmentScopeId;
         private Label myAttendanceStatusLabel = null!;
 
-        public CompanyPanel(int? signedInEmployeeId = null)
+        public CompanyPanel(int? signedInEmployeeId = null, bool attendanceOnly = false,
+            int? attendanceDepartmentScopeId = null)
         {
             this.signedInEmployeeId = signedInEmployeeId;
+            this.attendanceOnly = attendanceOnly;
+            this.attendanceDepartmentScopeId = attendanceDepartmentScopeId;
             BackColor = Theme.Bg;
             Padding = new Padding(24);
 
             companyTabs = new TabControl { Dock = DockStyle.Fill };
-            companyTabs.TabPages.Add(BuildBenefitsTab());
-            companyTabs.TabPages.Add(BuildPayrollPolicyTab());
+            if (!attendanceOnly)
+            {
+                companyTabs.TabPages.Add(BuildBenefitsTab());
+                companyTabs.TabPages.Add(BuildPayrollPolicyTab());
+            }
             companyTabs.TabPages.Add(BuildCalendarTab());
-            companyTabs.TabPages.Add(BuildDepartmentsTab());
+            if (!attendanceOnly)
+                companyTabs.TabPages.Add(BuildDepartmentsTab());
             Controls.Add(companyTabs);
 
             calendarRefreshTimer.Tick += (s, e) =>
@@ -51,10 +61,21 @@ namespace PAYROLL
 
         public void RefreshAll()
         {
+            if (attendanceOnly)
+            {
+                LoadCalendar();
+                return;
+            }
             LoadBenefits();
             LoadPayrollPolicy();
             LoadCalendar();
             LoadDepartments();
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) calendarRefreshTimer.Dispose();
+            base.Dispose(disposing);
         }
 
         private TabPage BuildPayrollPolicyTab()
@@ -419,10 +440,19 @@ namespace PAYROLL
             var attendanceToolbar = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg };
             var attendanceHeading = new Label
             {
-                Text = "Employee attendance", Font = Theme.BodyBold,
+                Text = attendanceOnly ? "Team attendance" : "Employee attendance", Font = Theme.BodyBold,
                 ForeColor = Theme.TextDark, Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft, BackColor = Theme.Bg
             };
+            var recordAttendance = new ModernButton
+            {
+                Text = "Record Selected Attendance",
+                Dock = DockStyle.Right,
+                Size = new Size(220, 34),
+                SurroundColor = Theme.Bg,
+                Visible = attendanceOnly
+            };
+            recordAttendance.Click += (s, e) => OpenSelectedSupervisorAttendance();
             var approveOvertime = new ModernButton
             {
                 Text = "Approve Selected OT",
@@ -433,6 +463,7 @@ namespace PAYROLL
             approveOvertime.Click += (s, e) => ApproveSelectedOvertime();
             attendanceToolbar.Controls.Add(attendanceHeading);
             attendanceToolbar.Controls.Add(approveOvertime);
+            if (attendanceOnly) attendanceToolbar.Controls.Add(recordAttendance);
             details.Controls.Add(calendarHolidayLabel, 0, 0);
             details.Controls.Add(departmentHeading, 0, 1);
             details.Controls.Add(calendarDepartmentCards, 0, 2);
@@ -617,6 +648,12 @@ namespace PAYROLL
         {
             loadingCalendar = true;
             var departments = CompanyService.ListDepartments();
+            if (attendanceOnly)
+            {
+                departments = attendanceDepartmentScopeId.HasValue
+                    ? departments.Where(department => department.DepartmentId == attendanceDepartmentScopeId.Value).ToList()
+                    : new List<Department>();
+            }
             var checkInCounts = CompanyService.CountDepartmentCheckIns(calendarMonth.SelectionStart.Date);
             int targetDepartmentId = selectedCalendarDepartmentId ?? departments.FirstOrDefault()?.DepartmentId ?? 0;
             int targetIndex = departments.FindIndex(department => department.DepartmentId == targetDepartmentId);
@@ -628,7 +665,9 @@ namespace PAYROLL
             {
                 calendarDepartmentCards.Controls.Add(new Label
                 {
-                    Text = "No departments have been added yet.", AutoSize = true,
+                    Text = attendanceOnly
+                        ? "Your employee profile is not assigned to a department. Ask HR / Cash Manager to update it."
+                        : "No departments have been added yet.", AutoSize = true,
                     ForeColor = Theme.TextGray, Font = Theme.Body, Margin = new Padding(8, 10, 8, 8)
                 });
             }
@@ -697,6 +736,11 @@ namespace PAYROLL
         private void LoadCalendarDepartmentAttendance()
         {
             if (loadingCalendar || selectedCalendarDepartmentId is not int departmentId) return;
+            if (attendanceOnly && departmentId != attendanceDepartmentScopeId)
+            {
+                calendarEventsGrid.DataSource = null;
+                return;
+            }
             DateTime selected = calendarMonth.SelectionStart.Date;
             var attendance = CompanyService.ListDepartmentAttendance(departmentId, selected);
             var leaveByEmployee = LeaveService.ListForRange(selected, selected)
@@ -784,6 +828,28 @@ namespace PAYROLL
                 MessageBox.Show("Could not approve overtime: " + ex.Message, "Overtime Approval",
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
+        }
+
+        private void OpenSelectedSupervisorAttendance()
+        {
+            if (!attendanceOnly) return;
+            if (calendarMonth.SelectionStart.Date != DateTime.Today)
+            {
+                MessageBox.Show(this, "Attendance can only be recorded for today. Select today's date in the calendar.",
+                    "Team Attendance", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (calendarEventsGrid.CurrentRow?.Cells["EmployeeID"].Value is not int employeeId ||
+                string.IsNullOrWhiteSpace(calendarEventsGrid.CurrentRow.Cells["Employee"].Value?.ToString()))
+            {
+                MessageBox.Show(this, "Select an employee from the attendance list first.",
+                    "Team Attendance", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            string employeeName = calendarEventsGrid.CurrentRow.Cells["Employee"].Value?.ToString() ?? "Employee";
+            using var entry = new SupervisorAttendanceEntryForm(employeeName, employeeId, LoadCalendar);
+            entry.ShowDialog(this);
         }
 
         // ------------------------------------------------------------------

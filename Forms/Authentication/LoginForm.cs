@@ -175,12 +175,17 @@ namespace PAYROLL
 
             try
             {
+                // Local copies of the earlier database did not yet contain
+                // Employees.DepartmentID. Upgrade that schema before the
+                // role query below reads the supervisor's department.
+                CompanyService.EnsureDepartmentSchema();
                 using var connection = new MySqlConnection(connectionString);
                 const string query = @"
-                    SELECT Role, EmployeeID
-                    FROM Accounts
-                    WHERE Username = @Username
-                    AND Password = @Password
+                    SELECT a.Role, a.EmployeeID, e.DepartmentID
+                    FROM Accounts a
+                    LEFT JOIN Employees e ON e.EmployeeID = a.EmployeeID
+                    WHERE a.Username = @Username
+                    AND a.Password = @Password
                     LIMIT 1";
 
                 using var command = new MySqlCommand(query, connection);
@@ -194,16 +199,23 @@ namespace PAYROLL
                 {
                     string role = reader["Role"]?.ToString() ?? "Employee";
                     int? employeeId = reader["EmployeeID"] is DBNull ? null : Convert.ToInt32(reader["EmployeeID"]);
+                    int? departmentId = reader["DepartmentID"] is DBNull ? null : Convert.ToInt32(reader["DepartmentID"]);
                     reader.Close();
 
-                    if (role is "Admin" or "HR" or "Cash Management")
+                    if (AccountRoles.IsHrCashManager(role))
                     {
                         var dashboard = new DashboardForm(username, employeeId);
                         dashboard.Show();
                     }
-                    else if (role == "Employee" && employeeId.HasValue)
+                    else if (role == AccountRoles.Employee && employeeId.HasValue)
                     {
                         var portal = new EmployeeDashboardForm(username, employeeId.Value);
+                        portal.Show();
+                    }
+                    else if (AccountRoles.IsTeamLeaderSupervisor(role) && employeeId.HasValue)
+                    {
+                        var portal = new EmployeeDashboardForm(username, employeeId.Value,
+                            canManageAttendance: true, attendanceDepartmentScopeId: departmentId);
                         portal.Show();
                     }
                     else
